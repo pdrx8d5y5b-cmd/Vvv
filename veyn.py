@@ -1,12 +1,12 @@
 
-# Let's create the FIXED version with BIG anime images and proper URL handling
-# The issue: using discord.Embed.Empty is deprecated, and set_image wasn't being used properly
+# I'll create the final clean bot code WITHOUT any file writing operations
+# The user should just copy-paste this directly into their bot file
 
-fixed_code = '''
+final_bot = '''
 """
 ╔═══════════════════════════════════════════════════════════════╗
-║     🌸  The Veyn — بوت الأنمي v3.1 (Image Fixed Edition)      ║
-║  صور كبيرة · بطاقات أنمي فاخرة · أزرار تفاعلية              ║
+║     🌸  The Veyn — بوت الأنمي v3.2 (Final Clean Edition)      ║
+║  صور كبيرة · بطاقات فاخرة · 10 أزرار · إشعارات أسبوعية     ║
 ╚═══════════════════════════════════════════════════════════════╝
 """
 
@@ -26,16 +26,16 @@ TOKEN = os.getenv("TOKEN")
 NOTIFY_CHANNEL_ID = int(os.getenv("NOTIFY_CHANNEL_ID"))
 
 # ═══════════════════════════════════════════════════════════════
-# 🎨  THEME SYSTEM
+# 🎨  THEME
 # ═══════════════════════════════════════════════════════════════
 
 class Theme:
-    PRIMARY      = 0xFF6B9D   # Pink Sakura
-    SECONDARY    = 0x6C63FF   # Purple
-    ACCENT       = 0x00D4AA   # Teal
-    WARNING      = 0xFFD93D   # Yellow
-    DANGER       = 0xFF4757   # Red
-    SUCCESS      = 0x10B981   # Green
+    PRIMARY   = 0xFF6B9D
+    SECONDARY = 0x6C63FF
+    ACCENT    = 0x00D4AA
+    WARNING   = 0xFFD93D
+    DANGER    = 0xFF4757
+    SUCCESS   = 0x10B981
     
     GENRE_COLORS = {
         "Action": 0xFF4757, "Adventure": 0xF97316, "Comedy": 0xFFD93D,
@@ -155,7 +155,7 @@ async def fetch_by_genre(genre_id: int, limit: int = 5) -> List[dict]:
     return data.get("data", []) if data else []
 
 # ═══════════════════════════════════════════════════════════════
-# 🎨  VISUAL UTILITIES (IMAGE FIX)
+# 🎨  VISUAL UTILITIES
 # ═══════════════════════════════════════════════════════════════
 
 def get_color(anime: dict) -> int:
@@ -182,25 +182,18 @@ def status_fmt(status: str) -> str:
     icon, txt = STATUS_AR.get(status, ("❓", status))
     return f"{icon} {txt}"
 
-# 🔥 IMAGE FUNCTIONS - THE KEY FIX
+# 🔥 IMAGE FUNCTIONS
 def get_large_image(anime: dict) -> Optional[str]:
-    """Get the LARGE anime image for embed image (not thumbnail)"""
+    """Get LARGE image for embed.set_image()"""
     images = anime.get("images", {})
     jpg = images.get("jpg", {})
-    # Try large first, then image_url as fallback
     return jpg.get("large_image_url") or jpg.get("image_url")
 
 def get_thumbnail(anime: dict) -> Optional[str]:
-    """Get small image for thumbnail"""
+    """Get small image for embed.set_thumbnail()"""
     images = anime.get("images", {})
     jpg = images.get("jpg", {})
     return jpg.get("image_url")
-
-def get_trailer_image(anime: dict) -> Optional[str]:
-    """Get trailer thumbnail if available"""
-    trailer = anime.get("trailer", {})
-    images = trailer.get("images", {})
-    return images.get("maximum_image_url") or images.get("large_image_url")
 
 def synopsis_short(anime: dict, limit: int = 300) -> str:
     s = anime.get("synopsis") or "لا يوجد وصف متاح."
@@ -220,16 +213,16 @@ def medal_emoji(rank: int) -> str:
     return medals.get(rank, "⭐")
 
 # ═══════════════════════════════════════════════════════════════
-# 📦  EMBED BUILDERS (WITH BIG IMAGES)
+# 📦  EMBED BUILDERS (WITH IMAGES)
 # ═══════════════════════════════════════════════════════════════
 
 def build_embed(anime: dict, prefix: str = "", color: Optional[int] = None) -> discord.Embed:
-    """Build beautiful anime card with BIG image"""
+    """Build anime card with BIG IMAGE"""
     color = color or get_color(anime)
     
     title_en = anime.get("title") or "؟"
     title_jp = anime.get("title_japanese") or ""
-    url = anime.get("url") or None  # FIXED: None instead of discord.Embed.Empty
+    url = anime.get("url") or None
     
     episodes = anime.get("episodes") or "؟"
     year = anime.get("year") or "—"
@@ -240,7 +233,6 @@ def build_embed(anime: dict, prefix: str = "", color: Optional[int] = None) -> d
     season = anime.get("season") or ""
     season_ar = SEASON_AR.get(season, season)
     
-    # Build description
     desc_lines = []
     if title_jp:
         desc_lines.append(f"🇯🇵 *{title_jp}*")
@@ -252,23 +244,18 @@ def build_embed(anime: dict, prefix: str = "", color: Optional[int] = None) -> d
         title=f"{prefix}{title_en}",
         description="\\n".join(desc_lines),
         color=color,
-        url=url,  # FIXED
+        url=url,
         timestamp=datetime.now(timezone.utc)
     )
     
-    # Genres
     embed.add_field(name="🎭 التصنيفات", value=genres_ar(anime), inline=False)
-    
-    # Stats
     embed.add_field(name="⭐ التقييم", value=score_bar(score), inline=True)
     embed.add_field(name="📺 الحلقات", value=f"`{episodes}`", inline=True)
     embed.add_field(name="🏆 الترتيب", value=f"`#{rank}`", inline=True)
-    
     embed.add_field(name="📅 السنة", value=f"{season_ar} `{year}`".strip(), inline=True)
     embed.add_field(name="🏷️ الحالة", value=status_fmt(status), inline=True)
     embed.add_field(name="🎥 الاستوديو", value=" · ".join(studios[:2]) if studios else "—", inline=True)
     
-    # Extra info
     duration = anime.get("duration")
     if duration:
         embed.add_field(name="⏱️ المدة", value=f"`{duration}`", inline=True)
@@ -277,25 +264,21 @@ def build_embed(anime: dict, prefix: str = "", color: Optional[int] = None) -> d
     if rating:
         embed.add_field(name="🔞 التصنيف العمري", value=f"`{rating}`", inline=True)
     
-    # 🔥 IMAGES - THE MAIN FIX
-    # 1. Set BIG image at bottom
+    # 🔥 BIG IMAGE
     large_img = get_large_image(anime)
     if large_img:
-        embed.set_image(url=large_img)  # THIS IS THE BIG IMAGE!
+        embed.set_image(url=large_img)
     
-    # 2. Set thumbnail (small image at top right)
+    # Thumbnail
     thumb_img = get_thumbnail(anime)
     if thumb_img:
         embed.set_thumbnail(url=thumb_img)
     
-    embed.set_footer(
-        text=f"🌸 The Veyn • بوت الأنمي  |  MAL ID: {anime.get('mal_id', '؟')}",
-    )
+    embed.set_footer(text=f"🌸 The Veyn • بوت الأنمي  |  MAL ID: {anime.get('mal_id', '؟')}")
     return embed
 
 
 def build_weekly_embed(anime_list: List[dict]) -> discord.Embed:
-    """Weekly announcement with images"""
     now = datetime.now(timezone.utc)
     season_names = {
         1: "❄️ شتاء", 2: "❄️ شتاء", 3: "🌸 ربيع", 4: "🌸 ربيع", 5: "🌸 ربيع",
@@ -319,14 +302,13 @@ def build_weekly_embed(anime_list: List[dict]) -> discord.Embed:
         score = f"⭐ {a.get('score')}" if a.get("score") else "✨ جديد"
         genres = genres_ar(a, 3)
         status_icon = "🔴" if a.get("status") == "Currently Airing" else "⏳"
-        
         embed.add_field(
             name=f"{status_icon} {a.get('title', '؟')}",
             value=f"{genres}\\n{score}",
             inline=False,
         )
     
-    # Add first anime image as banner
+    # First anime image as banner
     if anime_list:
         first_img = get_large_image(anime_list[0])
         if first_img:
@@ -337,7 +319,6 @@ def build_weekly_embed(anime_list: List[dict]) -> discord.Embed:
 
 
 def build_top_embed(anime_list: List[dict], title: str = "🏆 Top 10") -> discord.Embed:
-    """Top list embed"""
     embed = discord.Embed(
         title=title,
         description="أفضل الأنميات حسب تقييم المستخدمين على MyAnimeList",
@@ -348,22 +329,17 @@ def build_top_embed(anime_list: List[dict], title: str = "🏆 Top 10") -> disco
         medal = medal_emoji(i + 1)
         score = f"⭐ {a.get('score')}" if a.get("score") else ""
         eps = f"📺 {a.get('episodes')} حلقة" if a.get("episodes") else ""
-        
         embed.add_field(
             name=f"{medal} #{i+1} {a.get('title', '؟')}",
             value=f"{score}  {eps}",
             inline=False,
         )
     
-    # Add top 3 images
-    if len(anime_list) >= 3:
-        top3_urls = []
-        for a in anime_list[:3]:
-            img = get_large_image(a)
-            if img:
-                top3_urls.append(img)
-        if top3_urls:
-            embed.set_image(url=top3_urls[0])  # Show #1 image
+    # Show #1 image
+    if anime_list:
+        img = get_large_image(anime_list[0])
+        if img:
+            embed.set_image(url=img)
     
     embed.set_footer(text="🌸 The Veyn • اختر من القائمة أدناه للتفاصيل")
     return embed
@@ -380,14 +356,11 @@ def loading_embed(msg: str = "⏳ جاري التحميل...") -> discord.Embed:
 # ═══════════════════════════════════════════════════════════════
 
 class AnimeView(discord.ui.View):
-    """Main anime card with action buttons"""
-    
     def __init__(self, anime: dict, user_id: int):
         super().__init__(timeout=300)
         self.anime = anime
         self.user_id = user_id
         
-        # External links row
         if url := anime.get("url"):
             self.add_item(discord.ui.Button(
                 label="MyAnimeList", emoji="🌐",
@@ -469,9 +442,6 @@ class AnimeView(discord.ui.View):
         )
         for a in results:
             score = f"⭐ {a.get('score')}" if a.get("score") else "غير مقيّم"
-            # Add image to each similar anime field
-            if img := get_thumbnail(a):
-                e.set_thumbnail(url=img)
             e.add_field(
                 name=a.get("title", "؟"),
                 value=f"{genres_ar(a)}\\n{score}",
@@ -514,7 +484,6 @@ class AnimeView(discord.ui.View):
 
 
 class EpisodesView(discord.ui.View):
-    """Episode list with pagination"""
     PER_PAGE = 10
     
     def __init__(self, anime: dict, eps: list, user_id: int):
@@ -553,7 +522,6 @@ class EpisodesView(discord.ui.View):
         
         embed.set_footer(text=f"صفحة {self.page+1}/{self.total_pages+1} | 🌸 The Veyn")
         
-        # Add anime image
         if img := get_thumbnail(self.anime):
             embed.set_thumbnail(url=img)
         
@@ -600,7 +568,6 @@ class EpisodesView(discord.ui.View):
 
 
 class WatchlistView(discord.ui.View):
-    """Watchlist management"""
     PER_PAGE = 5
     
     def __init__(self, user_id: int):
@@ -650,7 +617,6 @@ class WatchlistView(discord.ui.View):
                 inline=False,
             )
         
-        # Add first anime image
         if chunk and chunk[0].get("image"):
             embed.set_thumbnail(url=chunk[0]["image"])
         
@@ -716,7 +682,6 @@ class RemoveSelect(discord.ui.View):
 
 
 class TopAnimeView(discord.ui.View):
-    """Top anime with detail select"""
     def __init__(self, anime_list: list):
         super().__init__(timeout=300)
         self.anime_list = anime_list
@@ -747,8 +712,6 @@ class TopAnimeView(discord.ui.View):
 # ═══════════════════════════════════════════════════════════════
 
 class MainMenuView(discord.ui.View):
-    """Main menu with 10 category buttons - PERSISTENT"""
-    
     def __init__(self):
         super().__init__(timeout=None)
     
@@ -775,7 +738,6 @@ class MainMenuView(discord.ui.View):
             return
         
         now = datetime.now(timezone.utc)
-        season = SEASON_AR.get("", "")
         embed = discord.Embed(
             title=f"🌸 أنمي الموسم — {now.year}",
             color=Theme.PRIMARY,
@@ -788,7 +750,6 @@ class MainMenuView(discord.ui.View):
                 inline=True,
             )
         
-        # Add season image
         if anime_list and (img := get_large_image(anime_list[0])):
             embed.set_image(url=img)
         
@@ -952,11 +913,11 @@ async def on_ready():
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name="🌸 الأنمي | The Veyn v3.1"
+            name="🌸 الأنمي | The Veyn v3.2"
         )
     )
     weekly_notify.start()
-    print(f"✅ The Veyn Bot v3.1 — {bot.user} — جاهز!")
+    print(f"✅ The Veyn Bot v3.2 — {bot.user} — جاهز!")
 
 # ═══════════════════════════════════════════════════════════════
 # 📢  SLASH COMMANDS
@@ -964,7 +925,6 @@ async def on_ready():
 
 @bot.tree.command(name="menu", description="افتح القائمة الرئيسية للبوت")
 async def menu_cmd(interaction: discord.Interaction):
-    """Main menu with 10 buttons"""
     embed = discord.Embed(
         title="🌸 The Veyn — مركز الأنمي",
         description=(
@@ -985,7 +945,7 @@ async def menu_cmd(interaction: discord.Interaction):
         color=Theme.PRIMARY,
         timestamp=datetime.now(timezone.utc)
     )
-    embed.set_footer(text="🌸 The Veyn v3.1 • بوت الأنمي العربي")
+    embed.set_footer(text="🌸 The Veyn v3.2 • بوت الأنمي العربي")
     
     view = MainMenuView()
     await interaction.response.send_message(embed=embed, view=view)
@@ -1074,7 +1034,6 @@ async def season_cmd(interaction: discord.Interaction):
             inline=True,
         )
     
-    # Add season image
     if anime_list and (img := get_large_image(anime_list[0])):
         embed.set_image(url=img)
     
@@ -1108,15 +1067,4 @@ async def weekly_notify():
 bot.run(TOKEN)
 '''
 
-# Save to file
-with open('/mnt/agents/output/veyn.py', 'w', encoding='utf-8') as f:
-    f.write(fixed_code)
 
-print("✅ Image-fixed bot saved!")
-print(f"📁 File: the_veyn_v3_1_images_fixed.py ({len(fixed_code)} chars)")
-print("\n🔥 KEY FIXES:")
-print("1. set_image() for BIG anime images")
-print("2. set_thumbnail() for small corner images")
-print("3. Fixed discord.Embed.Empty -> None")
-print("4. get_large_image() extracts large_image_url from API")
-print("5. Every embed now shows the anime poster!")
