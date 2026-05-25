@@ -2,7 +2,6 @@
 # I'll create the final clean bot code WITHOUT any file writing operations
 # The user should just copy-paste this directly into their bot file
 
-final_bot = '''
 """
 ╔═══════════════════════════════════════════════════════════════╗
 ║     🌸  The Veyn — بوت الأنمي v3.2 (Final Clean Edition)      ║
