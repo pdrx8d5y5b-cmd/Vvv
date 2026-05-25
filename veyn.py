@@ -14,11 +14,12 @@ import asyncio
 import json
 import os
 from datetime import datetime, timezone
+from dotenv import load_dotenv
+import os
+load_dotenv()
+TOKEN = os.getenv("TOKEN")
+NOTIFY_CHANNEL_ID = int(os.getenv("NOTIFY_CHANNEL_ID"))
 
-# ──────────────────────────────────────────
-TOKEN = "YOUR_BOT_TOKEN_HERE"
-# قناة الإشعارات الأسبوعية (ضع ID القناة)
-NOTIFY_CHANNEL_ID = 123456789012345678
 # ──────────────────────────────────────────
 
 # ════════════ ألوان حسب التصنيف ════════════
