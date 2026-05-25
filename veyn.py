@@ -1,9 +1,5 @@
-"""
-╔═══════════════════════════════════════════════════════════════╗
-║     🌸  The Veyn — بوت الأنمي v5.5 (Pro Edition)             ║
-║  تصميم احترافي + تشغيل مباشر + ترجمة                           ║
-╚═══════════════════════════════════════════════════════════════╝
-"""
+# 🔥 The Veyn — بوت الأنمي v5.5 Pro Edition
+# تصميم Crunchyroll x Anime Slayer Style
 
 import discord
 from discord.ext import commands
@@ -166,37 +162,61 @@ async def get_stream_url(episode_id: str) -> Optional[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🎨 THEME & COLORS
+# 🎨 THEME & COLORS — Crunchyroll x Anime Slayer Style
 # ═══════════════════════════════════════════════════════════════
 
 class Theme:
-    # ألوان الديسكورد
-    BG = 0x2B2D31
-    ACCENT = 0x5865F2
-    SUCCESS = 0x23A559
-    DANGER = 0xED4245
-    WARNING = 0xFEE75C
+    # ألوان الأنمي الداكنة
+    BG = 0x0D0D0D                    # خلفية سوداء حادّة
+    CARD_BG = 0x1A1A2E              # خلفية البطاقات
+    ACCENT = 0xFF6B35               # برتقالي متوهج (Crunchyroll style)
+    SECONDARY = 0xF7931A            # ذهبي
+    SUCCESS = 0x00D26A              # أخضر نيون
+    DANGER = 0xFF3860               # أحمر فاتح
+    WARNING = 0xFFE66D              # أصفر متوهج
+    PURPLE = 0x9D4EDD               # بنفسجي أنمي
     
+    # ألوان التصنيفات (Genres) — ألوان نيون
     GENRE_COLORS = {
-        "Action": 0xED4245, "Adventure": 0xEE8707, "Comedy": 0xFEE75C,
-        "Drama": 0x5865F2, "Fantasy": 0x9B59B6, "Horror": 0xC93C3C,
-        "Mystery": 0x7B68EE, "Romance": 0xEB459E, "Sci-Fi": 0x00D5FF,
-        "Slice of Life": 0xF59E0B, "Sports": 0x23A559, "Supernatural": 0x9B59B6,
-        "Psychological": 0xC93C70, "Thriller": 0xB03C3C, "Mecha": 0x4B5563,
-        "Music": 0xF472B6, "Isekai": 0x5865F2, "Harem": 0xFB7185,
-        "Ecchi": 0xF43F5E, "Shounen": 0xFEE75C, "Shoujo": 0xF472B6,
-        "Seinen": 0x64748B, "default": 0x5865F2,
+        "Action": 0xFF3860,
+        "Adventure": 0xFF9F1C,
+        "Comedy": 0xFFE66D,
+        "Drama": 0x9D4EDD,
+        "Fantasy": 0x7B2CBF,
+        "Horror": 0xC1121F,
+        "Mystery": 0x3A86FF,
+        "Romance": 0xFF006E,
+        "Sci-Fi": 0x00F5D4,
+        "Slice of Life": 0xFB8500,
+        "Sports": 0x06D6A0,
+        "Supernatural": 0x8338EC,
+        "Psychological": 0xE63946,
+        "Thriller": 0xD00000,
+        "Mecha": 0x6C757D,
+        "Music": 0xF72585,
+        "Isekai": 0xFF6B35,
+        "Harem": 0xE63946,
+        "Ecchi": 0xF4A261,
+        "Shounen": 0xFFE66D,
+        "Shoujo": 0xFF006E,
+        "Seinen": 0x3D405B,
+        "default": 0xFF6B35,
     }
+    
+    # Gradients للأثيم (نستخدمها كـ color في الـ embeds)
+    GRADIENT_TITLE = 0xFF6B35       # برتقالي متوهج للعناوين
+    GRADIENT_ACTION = 0xFF3860      # أحمر للـ Action
+
 
 GENRE_AR = {
-    "Action": "أكشن", "Adventure": "مغامرة", "Comedy": "كوميديا",
-    "Drama": "دراما", "Fantasy": "فانتازيا", "Horror": "رعب",
-    "Mystery": "غموض", "Romance": "رومانسي", "Sci-Fi": "خيال علمي",
-    "Slice of Life": "حياة يومية", "Sports": "رياضة",
-    "Supernatural": "خارق للطبيعة", "Thriller": "إثارة",
-    "Mecha": "ميكا", "Music": "موسيقى", "Psychological": "نفسي",
-    "Shounen": "شونن", "Shoujo": "شوجو", "Seinen": "سينن",
-    "Isekai": "إيسيكاي", "Harem": "حريم", "Ecchi": "إيتشي",
+    "Action": "⚔️ أكشن", "Adventure": "🗺️ مغامرة", "Comedy": "😂 كوميديا",
+    "Drama": "🎭 دراما", "Fantasy": "✨ فانتازيا", "Horror": "👻 رعب",
+    "Mystery": "🔮 غموض", "Romance": "💕 رومانسي", "Sci-Fi": "🚀 خيال علمي",
+    "Slice of Life": "☀️ حياة يومية", "Sports": "⚽ رياضة",
+    "Supernatural": "👁️ خارق للطبيعة", "Thriller": "🔪 إثارة",
+    "Mecha": "🤖 ميكا", "Music": "🎵 موسيقى", "Psychological": "🧠 نفسي",
+    "Shounen": "🔥 شونن", "Shoujo": "🌸 شوجو", "Seinen": "🌑 سينن",
+    "Isekai": "🌐 إيسيكاي", "Harem": "💝 حريم", "Ecchi": "😳 إيتشي",
 }
 
 STATUS_AR = {
@@ -282,11 +302,11 @@ def medal_emoji(rank: int) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 📦 EMBED BUILDERS
+# 📦 EMBED BUILDERS — Crunchyroll Style
 # ═══════════════════════════════════════════════════════════════
 
 def build_main_embed(anime: dict, prefix: str = "") -> discord.Embed:
-    """إنشاء الإمبيد الرئيسي"""
+    """إنشاء الإمبيد الرئيسي — أسلوب Crunchyroll"""
     color = get_embed_color(anime)
     title = anime.get("title", "؟")
     title_jp = anime.get("title_japanese", "")
@@ -301,7 +321,7 @@ def build_main_embed(anime: dict, prefix: str = "") -> discord.Embed:
     embed = discord.Embed(
         title=f"{prefix}{title}",
         description="\n".join(desc_parts),
-        color=Theme.BG,
+        color=Theme.CARD_BG,
         url=anime.get("url"),
         timestamp=datetime.now(timezone.utc)
     )
@@ -412,7 +432,7 @@ def success_embed(title: str, msg: str) -> discord.Embed:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🎛️ VIEWS
+# 🎛️ VIEWS — Crunchyroll x Anime Slayer Style
 # ═══════════════════════════════════════════════════════════════
 
 class SearchDropdown(discord.ui.View):
@@ -558,7 +578,7 @@ class EpisodeListView(discord.ui.View):
         embed = discord.Embed(
             title=f'📋 "{self.anime.get("title", "؟")}"',
             description="اختر الحلقة للمشاهدة 👇",
-            color=Theme.BG
+            color=Theme.CARD_BG
         )
         
         for ep in chunk:
@@ -589,7 +609,7 @@ class EpisodeListView(discord.ui.View):
     async def select_ep(self, interaction: discord.Interaction, btn: discord.ui.Button):
         view = EpisodeSelectView(self.anime, self.episodes, self.user_id, self.gogo_id)
         await interaction.response.send_message(
-            embed=discord.Embed(title="🎬 اختر الحلقة", description="اختر من القائمة 👇", color=Theme.BG),
+            embed=discord.Embed(title="🎬 اختر الحلقة", description="اختر من القائمة 👇", color=Theme.CARD_BG),
             view=view, ephemeral=True
         )
 
@@ -717,7 +737,7 @@ class EpisodePlayerView(discord.ui.View):
     async def pick_ep(self, interaction: discord.Interaction, btn: discord.ui.Button):
         view = EpisodeSelectView(self.anime, [], self.user_id, self.gogo_id)
         await interaction.response.send_message(
-            embed=discord.Embed(title="🔢 اختر الحلقة", description="اختر من القائمة 👇", color=Theme.BG),
+            embed=discord.Embed(title="🔢 اختر الحلقة", description="اختر من القائمة 👇", color=Theme.CARD_BG),
             view=view, ephemeral=True
         )
 
@@ -806,7 +826,7 @@ class TopActionsView(discord.ui.View):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🤖 BOT SETUP
+# 🤖 BOT SETUP — Anime Slayer Style
 # ═══════════════════════════════════════════════════════════════
 
 intents = discord.Intents.default()
@@ -824,7 +844,7 @@ async def on_ready():
 
 
 # ═══════════════════════════════════════════════════════════════
-# 📢 SLASH COMMANDS
+# 📢 SLASH COMMANDS — Crunchyroll Style
 # ═══════════════════════════════════════════════════════════════
 
 @bot.tree.command(name="anime", description="ابحث عن أنمي")
@@ -896,7 +916,7 @@ async def season_cmd(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title=f"🌸 أنمي موسم {season_names[now.month]} {now.year}",
-        color=Theme.BG
+        color=Theme.CARD_BG
     )
     
     for a in anime_list:
@@ -920,7 +940,7 @@ async def upcoming_cmd(interaction: discord.Interaction):
         await msg.edit(embed=error_embed("فشل التحميل."))
         return
     
-    embed = discord.Embed(title="⏳ أنمي قادم قريباً", color=Theme.BG)
+    embed = discord.Embed(title="⏳ أنمي قادم قريباً", color=Theme.CARD_BG)
     for a in anime_list:
         embed.add_field(name=a.get("title", "؟"), value=genres_text(a, 2), inline=True)
     
@@ -932,7 +952,7 @@ async def upcoming_cmd(interaction: discord.Interaction):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🚀 RUN
+# 🚀 RUN — Anime Slayer Edition
 # ═══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
