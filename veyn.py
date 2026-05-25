@@ -671,23 +671,23 @@ class EpisodePlayerView(discord.ui.View):
     async def prev_ep(self, interaction: discord.Interaction, btn: discord.ui.Button):
         if self.current_ep > 1:
             self.current_ep -= 1
-        # Update episode ID for new episode
-        for ep in self.anime.get("episodes", []):
-            if str(ep.get("number", 0)) == str(self.current_ep):
+        # جلب معلومات الحلقة من Gogoanime
+        gogo_data = await get_gogoanime_info(self.gogo_id)
+        episodes = gogo_data.get("episodes", []) if gogo_data else []
+        for ep in episodes:
+            ep_num_str = str(ep.get("number", ep.get("episodeNumber", 0)))
+            if ep_num_str == str(self.current_ep):
                 self.ep_id = ep.get("id", ep.get("episodeId"))
                 break
         await interaction.response.edit_message(embed=self.update_embed(), view=self)
     
-    @discord.ui.button(emoji="▶️", label="تشغيل", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(label="🎬 تشغيل", style=discord.ButtonStyle.success, row=0)
     async def play(self, interaction: discord.Interaction, btn: discord.ui.Button):
         title = self.anime.get("title", "؟")
         await interaction.response.defer(ephemeral=True)
         
-        if not self.ep_id:
-            await interaction.followup.send(embed=error_embed("ما لقيت معلومات الحلقة."), ephemeral=True)
-            return
-        
-        stream_data = await get_stream_url(self.ep_id)
+        # جلب رابط التشغيل من Gogoanime
+        stream_data = await get_stream_url(self.ep_id) if self.ep_id else None
         if not stream_data:
             await interaction.followup.send(embed=error_embed("ما في رابط متاح حالياً. جرب لاحقاً."), ephemeral=True)
             return
@@ -699,43 +699,53 @@ class EpisodePlayerView(discord.ui.View):
         
         video_url = sources[0].get("url", "")
         
-        link_view = discord.ui.View(timeout=60)
+        # إنشاء زر المشاهدة مباشرة
+        link_view = discord.ui.View()
         link_view.add_item(discord.ui.Button(
-            label="🎬 مشاهدة الآن",
-            emoji="▶️",
+            label="🌐 مشاهده عبر المتصفح",
+            emoji="🌐",
             url=video_url,
             style=discord.ButtonStyle.link
         ))
         
-        sub_msg = ""
-        subtitles = stream_data.get("subtitles", [])
-        for sub in subtitles:
-            if "english" in sub.get("lang", "").lower():
-                sub_msg = "\n\n🇬🇧 **ترجمة إنجليزية** متاحة"
-                break
-        
-        await interaction.followup.send(
-            embed=success_embed("✅ تم التحميل!", 
-                f'🎬 **{title}** — الحلقة {self.current_ep}\n\n'
-                f'📺 الرابط جاهز للمشاهدة!\n'
-                f'⚠️ بعض الروابط تحتاج VPN{sub_msg}'),
-            view=link_view, ephemeral=True
+        # رسالة المشغل المخصصة
+        player_embed = discord.Embed(
+            title=f"▶️ تشغيل: {title}",
+            description=f"🎬 **الحلقة {self.current_ep} من {self.total_ep}**\n\n"
+                       f"⏳ جاري فتح الرابط...\n"
+                       f"⚠️ تأكد من استخدام VPN إذا لم يعمل الرابط.",
+            color=0x9D4EDD,
+            timestamp=datetime.now(timezone.utc)
         )
+        
+        # إضافة معلومات الصورة
+        if thumb := get_image(self.anime, "thumbnail"):
+            player_embed.set_thumbnail(url=thumb)
+        
+        player_embed.set_footer(text="🌸 The Veyn • اضغط الزر للمشاهدة")
+        
+        await interaction.followup.send(embed=player_embed, view=link_view, ephemeral=True)
     
     @discord.ui.button(emoji="▶️", label="التالي", style=discord.ButtonStyle.secondary, row=0)
     async def next_ep(self, interaction: discord.Interaction, btn: discord.ui.Button):
         if self.current_ep < self.total_ep:
             self.current_ep += 1
-        # Update episode ID for new episode
-        for ep in self.anime.get("episodes", []):
-            if str(ep.get("number", 0)) == str(self.current_ep):
+        # جلب معلومات الحلقة من Gogoanime
+        gogo_data = await get_gogoanime_info(self.gogo_id)
+        episodes = gogo_data.get("episodes", []) if gogo_data else []
+        for ep in episodes:
+            ep_num_str = str(ep.get("number", ep.get("episodeNumber", 0)))
+            if ep_num_str == str(self.current_ep):
                 self.ep_id = ep.get("id", ep.get("episodeId"))
                 break
         await interaction.response.edit_message(embed=self.update_embed(), view=self)
     
     @discord.ui.button(label="🔢 رقم الحلقة", style=discord.ButtonStyle.primary, row=1)
     async def pick_ep(self, interaction: discord.Interaction, btn: discord.ui.Button):
-        view = EpisodeSelectView(self.anime, [], self.user_id, self.gogo_id)
+        # جلب الحلقات مرة ثانية
+        gogo_data = await get_gogoanime_info(self.gogo_id)
+        episodes = gogo_data.get("episodes", []) if gogo_data else []
+        view = EpisodeSelectView(self.anime, episodes, interaction.user.id, self.gogo_id)
         await interaction.response.send_message(
             embed=discord.Embed(title="🔢 اختر الحلقة", description="اختر من القائمة 👇", color=Theme.CARD_BG),
             view=view, ephemeral=True
@@ -779,9 +789,11 @@ class Top10View(discord.ui.View):
 
 class TopActionsView(discord.ui.View):
     """أزرار أنمي التوب"""
-    def __init__(self, anime: dict):
+    def __init__(self, anime: dict, gogo_id: str = None, episodes: list = None):
         super().__init__(timeout=300)
         self.anime = anime
+        self.gogo_id = gogo_id
+        self.episodes = episodes or []
     
     @discord.ui.button(label="▶️ تشغيل", style=discord.ButtonStyle.success, row=0)
     async def play_btn(self, interaction: discord.Interaction, btn: discord.ui.Button):
@@ -810,13 +822,31 @@ class TopActionsView(discord.ui.View):
         
         video_url = stream["sources"][0].get("url", "")
         
-        view = discord.ui.View(timeout=60)
-        view.add_item(discord.ui.Button(label="🎬 مشاهدة الآن", emoji="▶️", url=video_url, style=discord.ButtonStyle.link))
+        # إنشاء زر المشاهدة المخصص
+        link_view = discord.ui.View()
+        link_view.add_item(discord.ui.Button(
+            label="🌐 مشاهده عبر المتصفح",
+            emoji="🌐",
+            url=video_url,
+            style=discord.ButtonStyle.link
+        ))
         
-        await interaction.followup.send(
-            embed=success_embed("✅ تم!", f'🎬 **{title}** — الحلقة 1'),
-            view=view, ephemeral=True
+        # رسالة المشغل المخصصة
+        player_embed = discord.Embed(
+            title=f"▶️ تشغيل: {title}",
+            description=f"🎬 **الحلقة 1 من {len(info['episodes'])}**\n\n"
+                       f"⏳ جاري فتح الرابط...\n"
+                       f"⚠️ تأكد من استخدام VPN إذا لم يعمل الرابط.",
+            color=0x9D4EDD,
+            timestamp=datetime.now(timezone.utc)
         )
+        
+        if thumb := get_image(self.anime, "thumbnail"):
+            player_embed.set_thumbnail(url=thumb)
+        
+        player_embed.set_footer(text="🌸 The Veyn • اضغط الزر للمشاهدة")
+        
+        await interaction.followup.send(embed=player_embed, view=link_view, ephemeral=True)
     
     @discord.ui.button(label="🔍 التفاصيل", style=discord.ButtonStyle.primary, row=0)
     async def details_btn(self, interaction: discord.Interaction, btn: discord.ui.Button):
