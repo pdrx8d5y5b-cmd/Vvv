@@ -861,7 +861,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     await bot.tree.sync()
     await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.watching, name="🌸 الأنمي | The Veyn v6.0")
+        activity=discord.Activity(type=discord.ActivityType.watching, name="🌸 الأنمي | The Veyn v1")
     )
     print(f"✅ The Veyn v6.0 — {bot.user} — جاهز!")
 
