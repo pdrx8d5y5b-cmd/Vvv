@@ -1,5 +1,6 @@
 # 🔥 The Veyn — بوت الأنمي v6.0 Pro Edition
 # التعرف التلقائي على الصور في روم محدد + نظام النشر التلقائي
+# مُصلّح ومُحسّن بالكامل
 
 import discord
 from discord.ext import commands
@@ -8,10 +9,12 @@ import aiohttp
 import asyncio
 import os
 import json
+import base64
+import io
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from typing import Optional, List, Dict
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -38,20 +41,22 @@ class ChannelConfig:
     category: str
     enabled: bool = True
     last_news_id: str = ""
-    notification_role_id: int = None
-    notification_msg_id: int = None
+    notification_role_id: Optional[int] = None
+    notification_msg_id: Optional[int] = None
 
 
 class Database:
     def __init__(self):
         self.channels: Dict[int, ChannelConfig] = {}
         self.notification_users: Dict[int, List[int]] = {}
-        self.recognition_channel_id: int = None  # روم التعرف التلقائي
+        self.recognition_channel_id: Optional[int] = None
         self.last_anime_news_id: str = ""
         self.load()
 
     def load(self):
+        """تحميل البيانات من الملفات"""
         try:
+            # تحميل إعدادات الرومات
             if os.path.exists(CHANNELS_FILE):
                 with open(CHANNELS_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -59,44 +64,55 @@ class Database:
                         self.channels[int(k)] = ChannelConfig(**v)
                     self.notification_users = data.get('notifications', {})
 
+            # تحميل الكاش
             if os.path.exists(CACHE_FILE):
                 with open(CACHE_FILE, 'r', encoding='utf-8') as f:
                     cache = json.load(f)
                     self.last_anime_news_id = cache.get('last_anime_news_id', '')
 
+            # تحميل روم التعرف
             if os.path.exists(RECOGNITION_CHANNEL_FILE):
                 with open(RECOGNITION_CHANNEL_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.recognition_channel_id = data.get('channel_id')
+
+            print("✅ تم تحميل البيانات بنجاح")
         except Exception as e:
             print(f"❌ خطأ في تحميل البيانات: {e}")
 
     def save(self):
+        """حفظ البيانات إلى الملفات"""
         try:
+            # حفظ إعدادات الرومات
             data = {
-                'channels': {str(k): v.__dict__ for k, v in self.channels.items()},
+                'channels': {str(k): asdict(v) for k, v in self.channels.items()},
                 'notifications': self.notification_users
             }
             with open(CHANNELS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
+            # حفظ الكاش
             cache = {'last_anime_news_id': self.last_anime_news_id}
             with open(CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
 
+            # حفظ روم التعرف
             recognition_data = {'channel_id': self.recognition_channel_id}
             with open(RECOGNITION_CHANNEL_FILE, 'w', encoding='utf-8') as f:
                 json.dump(recognition_data, f, ensure_ascii=False, indent=2)
+
         except Exception as e:
             print(f"❌ خطأ في حفظ البيانات: {e}")
 
     def set_recognition_channel(self, channel_id: int):
         self.recognition_channel_id = channel_id
         self.save()
+        print(f"✅ تم تحديد روم التعرف: {channel_id}")
 
     def clear_recognition_channel(self):
         self.recognition_channel_id = None
         self.save()
+        print("✅ تم مسح روم التعرف")
 
     def add_channel(self, channel_id: int, category: str, role_id: int = None):
         self.channels[channel_id] = ChannelConfig(
@@ -106,6 +122,7 @@ class Database:
         )
         self.notification_users[channel_id] = []
         self.save()
+        print(f"✅ تم إضافة روم {channel_id} كفئة {category}")
 
     def remove_channel(self, channel_id: int):
         if channel_id in self.channels:
@@ -113,6 +130,7 @@ class Database:
         if channel_id in self.notification_users:
             del self.notification_users[channel_id]
         self.save()
+        print(f"✅ تم إزالة روم {channel_id}")
 
     def get_channels(self, category: str = None) -> List[ChannelConfig]:
         if category:
@@ -136,6 +154,7 @@ class Database:
         return user_id in self.notification_users.get(channel_id, [])
 
 
+# إنشاء كائن قاعدة البيانات
 db = Database()
 
 
@@ -144,7 +163,7 @@ db = Database()
 # ═══════════════════════════════════════════════════════════════
 
 JIKAN_BASE = "https://api.jikan.moe/v4"
-TRACE_MOE_URL = "https://api.trace.moe/search?url={}"
+TRACE_MOE_URL = "https://api.trace.moe/search"
 
 _rate_limiter = asyncio.Semaphore(1)
 _jikan_cache = {}
@@ -155,6 +174,7 @@ _jikan_cache = {}
 # ═══════════════════════════════════════════════════════════════
 
 async def jikan_get(endpoint: str, use_cache: bool = True) -> Optional[dict]:
+    """طلب من Jikan API مع Cache و Rate Limit"""
     global _jikan_cache
     cache_key = endpoint
 
@@ -178,8 +198,10 @@ async def jikan_get(endpoint: str, use_cache: bool = True) -> Optional[dict]:
                             for k in keys:
                                 del _jikan_cache[k]
                         return data
-        except Exception:
-            pass
+                    elif r.status == 429:
+                        await asyncio.sleep(3)
+        except Exception as e:
+            print(f"❌ خطأ في Jikan API: {e}")
     return None
 
 
@@ -188,56 +210,100 @@ async def jikan_get(endpoint: str, use_cache: bool = True) -> Optional[dict]:
 # ═══════════════════════════════════════════════════════════════
 
 async def search_anime(query: str, limit: int = 15) -> List[dict]:
+    """البحث عن أنمي في MyAnimeList"""
     encoded_query = query.replace(" ", "%20")
     data = await jikan_get(f"/anime?q={encoded_query}&limit={limit}&sfw=true")
     return data.get("data", []) if data else []
 
 
 async def get_anime_details(mal_id: int) -> Optional[dict]:
+    """جلب تفاصيل الأنمي"""
     data = await jikan_get(f"/anime/{mal_id}/full")
     return data.get("data") if data else None
 
 
 async def get_random_anime() -> Optional[dict]:
+    """أنمي عشوائي"""
     data = await jikan_get("/random/anime", use_cache=False)
     return data.get("data") if data else None
 
 
 async def get_top_anime(limit: int = 10) -> List[dict]:
+    """أفضل الأنميات"""
     data = await jikan_get(f"/top/anime?limit={limit}")
     return data.get("data", []) if data else []
 
 
 async def get_seasonal_anime(limit: int = 10) -> List[dict]:
+    """أنمي الموسم"""
     data = await jikan_get(f"/seasons/now?limit={limit}")
     return data.get("data", []) if data else []
 
 
 async def get_upcoming_anime(limit: int = 10) -> List[dict]:
+    """أنمي قادم"""
     data = await jikan_get(f"/seasons/upcoming?limit={limit}")
     return data.get("data", []) if data else []
 
 
 async def get_airing_anime(limit: int = 15) -> List[dict]:
+    """الأنمي اللي يعرض حالياً"""
     data = await jikan_get(f"/top/anime?filter=airing&limit={limit}")
     return data.get("data", []) if data else []
 
 
 async def get_characters(mal_id: int) -> List[dict]:
+    """جلب شخصيات الأنمي"""
     data = await jikan_get(f"/anime/{mal_id}/characters")
     return data.get("data", []) if data else []
 
 
 async def get_anime_recommendations(mal_id: int, limit: int = 6) -> List[dict]:
+    """توصيات الأنمي"""
     data = await jikan_get(f"/anime/{mal_id}/recommendations")
     return data.get("data", [])[:limit] if data else []
 
 
 async def search_characters(query: str, limit: int = 10) -> List[dict]:
-    """البحث عن شخصية"""
+    """البحث عن شخصية أنمي"""
     encoded_query = query.replace(" ", "%20")
     data = await jikan_get(f"/characters?q={encoded_query}&limit={limit}&order=favorites&sort=desc")
     return data.get("data", []) if data else []
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🖼️ TRACE.MOE FUNCTIONS (للتعرف على الأنمي من الصور)
+# ═══════════════════════════════════════════════════════════════
+
+async def trace_moe_search(image_data: bytes) -> Optional[dict]:
+    """البحث في Trace.moe باستخدام الصورة"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # تحويل الصورة لـ base64
+            base64_image = base64.b64encode(image_data).decode('utf-8')
+
+            # إنشاء form data
+            form = aiohttp.FormData()
+            form.add_field(
+                'image',
+                base64_image,
+                filename='image.jpg',
+                content_type='image/jpeg'
+            )
+
+            async with session.post(
+                TRACE_MOE_URL,
+                data=form,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    print(f"❌ Trace.moe خطأ: {response.status}")
+                    return None
+    except Exception as e:
+        print(f"❌ خطأ في Trace.moe: {e}")
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -261,7 +327,11 @@ class Theme:
         "Action": 0xFF3860, "Adventure": 0xFF9F1C, "Comedy": 0xFFE66D,
         "Drama": 0x9D4EDD, "Fantasy": 0x7B2CBF, "Horror": 0xC1121F,
         "Mystery": 0x3A86FF, "Romance": 0xFF006E, "Sci-Fi": 0x00F5D4,
-        "default": 0xFF6B35,
+        "Slice of Life": 0xFB8500, "Sports": 0x06D6A0, "Supernatural": 0x8338EC,
+        "Psychological": 0xE63946, "Thriller": 0xD00000, "Mecha": 0x6C757D,
+        "Music": 0xF72585, "Isekai": 0xFF6B35, "Harem": 0xE63946,
+        "Ecchi": 0xF4A261, "Shounen": 0xFFE66D, "Shoujo": 0xFF006E,
+        "Seinen": 0x3D405B, "default": 0xFF6B35,
     }
 
 
@@ -269,6 +339,11 @@ GENRE_AR = {
     "Action": "⚔️ أكشن", "Adventure": "🗺️ مغامرة", "Comedy": "😂 كوميديا",
     "Drama": "🎭 دراما", "Fantasy": "✨ فانتازيا", "Horror": "👻 رعب",
     "Mystery": "🔮 غموض", "Romance": "💕 رومانسي", "Sci-Fi": "🚀 خيال علمي",
+    "Slice of Life": "☀️ حياة يومية", "Sports": "⚽ رياضة",
+    "Supernatural": "👁️ خارق للطبيعة", "Thriller": "🔪 إثارة",
+    "Mecha": "🤖 ميكا", "Music": "🎵 موسيقى", "Psychological": "🧠 نفسي",
+    "Shounen": "🔥 شونن", "Shoujo": "🌸 شوجو", "Seinen": "🌑 سينن",
+    "Isekai": "🌐 إيسيكاي", "Harem": "💝 حريم", "Ecchi": "😳 إيتشي",
 }
 
 STATUS_AR = {
@@ -283,6 +358,7 @@ STATUS_AR = {
 # ═══════════════════════════════════════════════════════════════
 
 def get_embed_color(anime: dict) -> int:
+    """جلب لون الإمبيد حسب التصنيف"""
     genres = anime.get("genres", []) + anime.get("themes", [])
     for g in genres:
         name = g.get("name", "")
@@ -292,6 +368,7 @@ def get_embed_color(anime: dict) -> int:
 
 
 def get_image(anime: dict, img_type: str = "thumbnail") -> Optional[str]:
+    """جلب صورة الأنمي"""
     images = anime.get("images", {})
     jpg = images.get("jpg", {})
     if img_type == "banner":
@@ -300,22 +377,29 @@ def get_image(anime: dict, img_type: str = "thumbnail") -> Optional[str]:
 
 
 def get_char_image(char: dict) -> Optional[str]:
-    images = char.get("images", {})
-    return images.get("jpg", {}).get("image_url")
+    """جلب صورة الشخصية"""
+    # قد تكون الشخصية dict مستقل أو داخل مفتاح "character"
+    if isinstance(char, dict):
+        images = char.get("images", {})
+        return images.get("jpg", {}).get("image_url")
+    return None
 
 
 def genres_text(anime: dict, max_items: int = 4) -> str:
+    """تحويل التصنيفات لنص عربي"""
     genres = anime.get("genres", []) + anime.get("themes", [])
     names = [GENRE_AR.get(g.get("name", ""), g.get("name", "")) for g in genres[:max_items]]
     return " · ".join(names) if names else "—"
 
 
 def status_label(status: str) -> str:
+    """تحويل الحالة لنص عربي"""
     _, txt = STATUS_AR.get(status, ("❓", status))
     return txt
 
 
 def synopsis_short(anime: dict, limit: int = 300) -> str:
+    """تلخيص القصة"""
     text = anime.get("synopsis") or "لا يوجد وصف متاح."
     if len(text) > limit:
         return text[:limit].rsplit(" ", 1)[0] + "..."
@@ -323,6 +407,7 @@ def synopsis_short(anime: dict, limit: int = 300) -> str:
 
 
 def year_label(anime: dict) -> str:
+    """استخراج السنة"""
     year = anime.get("year")
     if not year:
         aired = anime.get("aired", {})
@@ -332,29 +417,45 @@ def year_label(anime: dict) -> str:
 
 
 def medal_emoji(rank: int) -> str:
+    """إيموجي الميدالية"""
     return {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, "⭐")
 
 
-def rating_stars(score: float) -> str:
+def rating_stars(score: Optional[float]) -> str:
+    """تحويل التقييم لنجوم"""
+    if score is None:
+        return "☆☆☆☆☆"
     full = int(score // 2)
     half = 1 if (score % 2) >= 1 else 0
     return "⭐" * full + ("✴️" if half else "") + "☆" * (5 - full - half)
 
 
 def format_number(num: int) -> str:
+    """تنسيق الأرقام"""
     return f"{num:,}"
 
 
 def get_category_emoji(category: str) -> str:
+    """إيموجي الفئة"""
     return {"anime": "🎬", "manga": "📚", "manhwa": "🇰🇷"}.get(category, "📰")
 
 
 def get_category_name(category: str) -> str:
+    """اسم الفئة بالعربي"""
     return {"anime": "أنمي", "manga": "مانجا", "manhwa": "مانهوا"}.get(category, "أخبار")
 
 
 def get_category_color(category: str) -> int:
+    """لون الفئة"""
     return {"anime": Theme.ACCENT, "manga": Theme.MANGA, "manhwa": Theme.MANHWA}.get(category, Theme.INFO)
+
+
+def format_timestamp(seconds: float) -> str:
+    """تحويل الثواني لصيغة وقت HH:MM:SS"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -362,7 +463,7 @@ def get_category_color(category: str) -> int:
 # ═══════════════════════════════════════════════════════════════
 
 def build_main_embed(anime: dict, prefix: str = "") -> discord.Embed:
-    color = get_embed_color(anime)
+    """إنشاء الإمبيد الرئيسي"""
     title = anime.get("title", "؟")
     title_jp = anime.get("title_japanese", "")
     mal_id = anime.get("mal_id", 0)
@@ -415,6 +516,7 @@ def build_main_embed(anime: dict, prefix: str = "") -> discord.Embed:
 
 
 def build_search_embed(query: str, results: List[dict]) -> discord.Embed:
+    """إنشاء امبد نتائج البحث"""
     embed = discord.Embed(
         title=f"🔍 نتائج البحث: {query}",
         description=f"تم العثور على **{len(results)}** نتيجة\nاختر أنمي من القائمة 👇",
@@ -434,6 +536,7 @@ def build_search_embed(query: str, results: List[dict]) -> discord.Embed:
 
 
 def build_top_embed(anime_list: List[dict]) -> discord.Embed:
+    """إنشاء امبد أفضل 10"""
     embed = discord.Embed(
         title="🏆 Top 10 Anime",
         description="أفضل الأنميات على MyAnimeList",
@@ -453,75 +556,45 @@ def build_top_embed(anime_list: List[dict]) -> discord.Embed:
 
 
 def build_character_embed(anime: dict, character: dict) -> discord.Embed:
+    """إنشاء امبد الشخصية"""
+    # استخراج بيانات الشخصية
+    if "character" in character:
+        char_data = character["character"]
+    else:
+        char_data = character
+
+    char_name = char_data.get("name", "؟") if isinstance(char_data, dict) else "؟"
+    char_images = char_data.get("images", {}) if isinstance(char_data, dict) else {}
+    char_favorites = char_data.get("favorites", 0) if isinstance(char_data, dict) else 0
+
     embed = discord.Embed(
-        title=f"🎭 {character.get('name', '؟')}",
+        title=f"🎭 {char_name}",
         description=f"من أنمي: **{anime.get('title', '؟')}**",
         color=Theme.PURPLE,
         timestamp=datetime.now(timezone.utc)
     )
 
-    favorites = character.get('favorites', 0)
-    if favorites:
-        embed.add_field(name="⭐ الإعجابات", value=f"**{format_number(favorites)}**", inline=True)
+    if char_favorites:
+        embed.add_field(name="⭐ الإعجابات", value=f"**{format_number(char_favorites)}**", inline=True)
 
     role = character.get('role', 'غير محدد')
     embed.add_field(name="🎭 الدور", value=role, inline=True)
 
-    about = character.get('about', '')
+    about = char_data.get('about', '') if isinstance(char_data, dict) else ''
     if about and len(about) > 500:
         about = about[:500] + "..."
     if about:
         embed.add_field(name="📝 نبذة", value=about[:300], inline=False)
 
-    if img := get_char_image(character):
+    if img := char_images.get("jpg", {}).get("image_url"):
         embed.set_thumbnail(url=img)
 
     embed.set_footer(text=f"🌸 The Veyn • شخصية من {anime.get('title', '')}")
     return embed
 
 
-def build_auto_recognition_embed(
-    anime_title: str,
-    anime_title_jp: str = None,
-    episode: str = None,
-    timestamp_text: str = None,
-    similarity: float = None,
-    image_url: str = None,
-    mal_url: str = None
-) -> discord.Embed:
-    """إنشاء امبد التعرف التلقائي"""
-
-    embed = discord.Embed(
-        title=f"🎬 {anime_title}",
-        color=Theme.ACCENT,
-        url=mal_url,
-        timestamp=datetime.now(timezone.utc)
-    )
-
-    if anime_title_jp:
-        embed.description = f"🇯🇵 *{anime_title_jp}*"
-
-    if episode:
-        embed.add_field(name="📺 الحلقة", value=f"**{episode}**", inline=True)
-
-    if timestamp_text:
-        embed.add_field(name="⏱️ الوقت", value=f"**{timestamp_text}**", inline=True)
-
-    if similarity:
-        similarity_percent = min(99, int(similarity * 100))
-        embed.add_field(name="📊 التشابه", value=f"**{similarity_percent}%**", inline=True)
-
-    if mal_url:
-        embed.add_field(name="🔗 رابط", value=f"[MyAnimeList]({mal_url})", inline=True)
-
-    if image_url:
-        embed.set_thumbnail(url=image_url)
-
-    embed.set_footer(text="🌸 The Veyn • التعرف التلقائي")
-    return embed
-
-
 def build_news_embed(anime: dict, category: str = "anime") -> discord.Embed:
+    """إنشاء امبد الخبر"""
     emoji = get_category_emoji(category)
     color = get_category_color(category)
     cat_name = get_category_name(category)
@@ -553,8 +626,9 @@ def build_news_embed(anime: dict, category: str = "anime") -> discord.Embed:
 
 
 def build_notification_embed(channel_config: ChannelConfig) -> discord.Embed:
+    """إنشاء امبد الإشعارات"""
     cat_name = get_category_name(channel_config.category)
-    emoji = get_category_emoji(category)
+    emoji = get_category_emoji(channel_config.category)
 
     embed = discord.Embed(
         title=f"{emoji} إشعارات {cat_name}",
@@ -565,6 +639,56 @@ def build_notification_embed(channel_config: ChannelConfig) -> discord.Embed:
     )
 
     embed.set_footer(text=f"🌸 The Veyn • إشعارات {cat_name}")
+    return embed
+
+
+def build_recognition_result_embed(
+    anime_title: str,
+    anime_title_jp: str = None,
+    episode: str = None,
+    timestamp_str: str = None,
+    similarity: float = None,
+    image_preview: str = None,
+    mal_url: str = None,
+    full_anime: dict = None
+) -> discord.Embed:
+    """إنشاء امبد نتيجة التعرف"""
+    embed = discord.Embed(
+        title=f"🎬 {anime_title}",
+        color=Theme.ACCENT,
+        url=mal_url,
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    if anime_title_jp:
+        embed.description = f"🇯🇵 *{anime_title_jp}*"
+
+    if episode:
+        embed.add_field(name="📺 الحلقة", value=f"**{episode}**", inline=True)
+
+    if timestamp_str:
+        embed.add_field(name="⏱️ الوقت", value=f"**{timestamp_str}**", inline=True)
+
+    if similarity is not None:
+        similarity_percent = min(99, int(similarity * 100))
+        indicator = "🟢" if similarity >= 0.8 else "🟡" if similarity >= 0.5 else "🔴"
+        embed.add_field(name="📊 التشابه", value=f"**{similarity_percent}%** {indicator}", inline=True)
+
+    # التصنيفات من معلومات MAL
+    if full_anime and (genres := genres_text(full_anime, 3)):
+        embed.add_field(name="🎭 التصنيفات", value=genres, inline=False)
+
+    # التقييم من MAL
+    if full_anime and full_anime.get('score'):
+        embed.add_field(name="⭐ التقييم", value=f"**{full_anime.get('score')}/10**", inline=True)
+
+    if mal_url:
+        embed.add_field(name="🔗 رابط", value=f"[MyAnimeList]({mal_url})", inline=True)
+
+    if image_preview:
+        embed.set_thumbnail(url=image_preview)
+
+    embed.set_footer(text="🌸 The Veyn • التعرف التلقائي")
     return embed
 
 
@@ -708,11 +832,12 @@ class CharacterListView(discord.ui.View):
         self.characters = characters
         self.user_id = user_id
         self.page = 0
-        self.total_pages = max(0, (len(characters) - 1) // self.PER_PAGE)
+        self.total_pages = max(0, (len(characters) - 1) // self.PER_PAGE) if characters else 0
 
     def build_page(self) -> discord.Embed:
         start = self.page * self.PER_PAGE
-        chunk = self.characters[start:start + self.PER_PAGE]
+        end = start + self.PER_PAGE
+        chunk = self.characters[start:end]
 
         embed = discord.Embed(
             title=f'🎭 شخصيات "{self.anime.get("title", "؟")}"',
@@ -721,13 +846,19 @@ class CharacterListView(discord.ui.View):
         )
 
         for char in chunk:
-            char_data = char.get("character", {})
-            name = char_data.get("name", "؟")
+            # استخراج بيانات الشخصية
+            if "character" in char:
+                char_data = char["character"]
+            else:
+                char_data = char
+
+            char_name = char_data.get("name", "؟") if isinstance(char_data, dict) else "؟"
+            char_favorites = char_data.get("favorites", 0) if isinstance(char_data, dict) else 0
             role = char.get("role", "")
-            favorites = char_data.get("favorites", 0)
+
             embed.add_field(
-                name=f"👤 {name}",
-                value=f"🎭 {role} | 💖 {format_number(favorites)}",
+                name=f"👤 {char_name}",
+                value=f"🎭 {role} | 💖 {format_number(char_favorites)}",
                 inline=True
             )
 
@@ -766,15 +897,24 @@ class CharacterSelectView(discord.ui.View):
         self.characters = characters
         self.user_id = user_id
 
-        options = [
-            discord.SelectOption(
-                label=char.get("character", {}).get("name", "؟")[:50],
+        options = []
+        for i, char in enumerate(characters[:25]):
+            # استخراج بيانات الشخصية
+            if "character" in char:
+                char_data = char["character"]
+            else:
+                char_data = char
+
+            char_name = char_data.get("name", "؟") if isinstance(char_data, dict) else "؟"
+            char_favorites = char_data.get("favorites", 0) if isinstance(char_data, dict) else 0
+            role = char.get("role", "")
+
+            options.append(discord.SelectOption(
+                label=char_name[:50],
                 value=str(i),
-                description=f"🎭 {char.get('role', '')} | 💖 {format_number(char.get('character', {}).get('favorites', 0))}",
+                description=f"🎭 {role} | 💖 {format_number(char_favorites)}",
                 emoji="👤"
-            )
-            for i, char in enumerate(characters[:25])
-        ]
+            ))
 
         select = discord.ui.Select(placeholder="👤 اختر شخصية...", options=options)
         select.callback = self.on_select
@@ -782,7 +922,7 @@ class CharacterSelectView(discord.ui.View):
 
     async def on_select(self, interaction: discord.Interaction):
         idx = int(interaction.data["values"][0])
-        char = self.characters[idx].get("character", {})
+        char = self.characters[idx]
 
         embed = build_character_embed(self.anime, char)
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -861,11 +1001,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     await bot.tree.sync()
     await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.watching, name="🌸 الأنمي | The Veyn v1")
+        activity=discord.Activity(type=discord.ActivityType.watching, name="🌸 الأنمي | The Veyn v6.0")
     )
     print(f"✅ The Veyn v6.0 — {bot.user} — جاهز!")
 
-    # بدء مهمة التعرف التلقائي والنشر
+    # بدء مهمة النشر التلقائي
     bot.loop.create_task(news_broadcast_loop())
 
 
@@ -1115,12 +1255,16 @@ async def character_cmd(interaction: discord.Interaction, name: str):
     )
 
     for char in characters[:5]:
-        char_data = char.get("character", {})
-        name = char_data.get("name", "؟")
+        if "character" in char:
+            char_data = char["character"]
+        else:
+            char_data = char
+
+        char_name = char_data.get("name", "؟") if isinstance(char_data, dict) else "؟"
         role = char.get("role", "")
-        favorites = char_data.get("favorites", 0)
+        favorites = char_data.get("favorites", 0) if isinstance(char_data, dict) else 0
         embed.add_field(
-            name=f"👤 {name}",
+            name=f"👤 {char_name}",
             value=f"🎭 {role} | 💖 {format_number(favorites)}",
             inline=False
         )
@@ -1256,7 +1400,7 @@ async def list_cmd(interaction: discord.Interaction):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🖼️ RECOGNITION CHANNEL COMMANDS (تخصيص روم التعرف التلقائي)
+# 🖼️ RECOGNITION CHANNEL COMMANDS
 # ═══════════════════════════════════════════════════════════════
 
 @bot.tree.command(name="setrecog", description="تحديد روم للتعرف التلقائي على الصور")
@@ -1288,7 +1432,7 @@ async def setrecog_cmd(interaction: discord.Interaction):
         name="💡 كيف يعمل؟",
         value="أي شخص يرسل صورة → البوت يتعرف عليها → يرجع:\n"
               "🎬 اسم الأنمي\n"
-              "👤 اسم الشخصية\n"
+              "📺 رقم الحلقة\n"
               "📊 نسبة التشابه",
         inline=False
     )
@@ -1367,9 +1511,9 @@ async def recogstatus_cmd(interaction: discord.Interaction):
 async def on_message(message: discord.Message):
     """معالجة الرسائل - التعرف التلقائي على الصور"""
     if message.author.bot:
+        await bot.process_commands(message)
         return
 
-    # التحقق من وجود صورة
     if not message.attachments:
         await bot.process_commands(message)
         return
@@ -1408,146 +1552,70 @@ async def process_auto_recognition(message: discord.Message, image_attachment: d
         )
         processing_msg = await message.reply(embed=processing_embed)
 
-        # الحصول على رابط الصورة
-        image_url = image_attachment.url
+        # تحميل الصورة
+        image_data = await image_attachment.read()
 
-        # استخدام Trace.moe للتعرف
-        trace_url = f"https://api.trace.moe/search?url={image_url}"
+        # البحث في Trace.moe
+        trace_result = await trace_moe_search(image_data)
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(trace_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == 200:
-                        data = await response.json()
+        if trace_result and trace_result.get('result') and len(trace_result['result']) > 0:
+            # أفضل نتيجة
+            best_match = trace_result['result'][0]
+            anime_info = best_match.get('anime', {})
+            episode_info = best_match.get('episode', '?')
+            from_time = best_match.get('from', 0)
+            similarity = best_match.get('similarity', 0)
+            image_preview = best_match.get('image')
 
-                        if data.get('result') and len(data['result']) > 0:
-                            # أفضل نتيجة
-                            best_match = data['result'][0]
-                            anime_info = best_match.get('anime', {})
-                            episode_info = best_match.get('episode', '?')
-                            from_time = best_match.get('from', 0)
-                            similarity = best_match.get('similarity', 0)
+            # تحويل الوقت
+            time_str = format_timestamp(from_time)
 
-                            # تحويل الوقت لصيغة مقروءة
-                            hours = int(from_time // 3600)
-                            minutes = int((from_time % 3600) // 60)
-                            seconds = int(from_time % 60)
-                            time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            # معلومات الأنمي
+            mal_id = anime_info.get('mal_id')
+            anime_title = anime_info.get('title', 'غير معروف')
+            anime_title_jp = anime_info.get('title_native', '')
+            mal_url = f"https://myanimelist.net/anime/{mal_id}" if mal_id else None
 
-                            # جلب معلومات الأنمي من MAL
-                            mal_id = anime_info.get('mal_id')
-                            anime_title = anime_info.get('title', 'غير معروف')
-                            anime_title_jp = anime_info.get('title_native', '')
-                            image_preview = best_match.get('image')
+            # جلب معلومات إضافية من MAL
+            full_anime = None
+            if mal_id:
+                full_anime = await get_anime_details(mal_id)
 
-                            # الحصول على معلومات إضافية من MAL
-                            mal_url = f"https://myanimelist.net/anime/{mal_id}" if mal_id else None
+            # إنشاء امبد النتيجة
+            result_embed = build_recognition_result_embed(
+                anime_title=anime_title,
+                anime_title_jp=anime_title_jp if anime_title_jp else None,
+                episode=str(episode_info),
+                timestamp_str=time_str,
+                similarity=similarity,
+                image_preview=image_preview,
+                mal_url=mal_url,
+                full_anime=full_anime
+            )
+            result_embed.set_footer(text=f"🌸 The Veyn • تم التحليل بنجاح | من: {message.author.name}")
 
-                            full_anime = None
-                            if mal_id:
-                                full_anime = await get_anime_details(mal_id)
+            await processing_msg.edit(embed=result_embed)
 
-                            # إنشاء امبد النتيجة
-                            result_embed = discord.Embed(
-                                title=f"🎬 {anime_title}",
-                                color=Theme.ACCENT,
-                                url=mal_url,
-                                timestamp=datetime.now(timezone.utc)
-                            )
+        else:
+            # ما لقي نتيجة
+            no_result_embed = discord.Embed(
+                title="❌ لم يتم التعرف",
+                description="🔍 عذراً، ما قدرت أتعرف على هذه الصورة.\n\n"
+                           "💡 **نصائح:**\n"
+                           "• تأكد إن الصورة واضحة وفيها مشهد أنمي\n"
+                           "• جرب صورة من زاوية مختلفة\n"
+                           "• تأكد إن الأنمي في قاعدة بيانات Trace.moe",
+                color=Theme.WARNING,
+                timestamp=datetime.now(timezone.utc)
+            )
+            no_result_embed.set_image(url=image_attachment.url)
+            no_result_embed.set_footer(text=f"🌸 The Veyn • من: {message.author.name}")
 
-                            if anime_title_jp:
-                                result_embed.description = f"🇯🇵 *{anime_title_jp}*"
-
-                            result_embed.add_field(
-                                name="📺 الحلقة",
-                                value=f"**{episode_info}**",
-                                inline=True
-                            )
-
-                            result_embed.add_field(
-                                name="⏱️ الوقت",
-                                value=f"**{time_str}**",
-                                inline=True
-                            )
-
-                            # نسبة التشابه
-                            similarity_percent = min(99, int(similarity * 100))
-                            result_embed.add_field(
-                                name="📊 التشابه",
-                                value=f"**{similarity_percent}%** {'🟢' if similarity >= 0.8 else '🟡' if similarity >= 0.5 else '🔴'}",
-                                inline=True
-                            )
-
-                            # التصنيفات
-                            if full_anime and (genres := genres_text(full_anime, 3)):
-                                result_embed.add_field(
-                                    name="🎭 التصنيفات",
-                                    value=genres,
-                                    inline=False
-                                )
-
-                            # التقييم
-                            if full_anime and full_anime.get('score'):
-                                result_embed.add_field(
-                                    name="⭐ التقييم",
-                                    value=f"**{full_anime.get('score')}/10**",
-                                    inline=True
-                                )
-
-                            # رابط MAL
-                            if mal_url:
-                                result_embed.add_field(
-                                    name="🔗 رابط",
-                                    value=f"[MyAnimeList]({mal_url})",
-                                    inline=True
-                                )
-
-                            # الصورة المصغرة من Trace.moe
-                            if image_preview:
-                                result_embed.set_thumbnail(url=image_preview)
-
-                            # معلومات المحلل
-                            result_embed.set_footer(
-                                text=f"🌸 The Veyn • تم التحليل بنجاح | من: {message.author.name}"
-                            )
-
-                            await processing_msg.edit(embed=result_embed)
-
-                        else:
-                            # ما لقي نتيجة
-                            no_result_embed = discord.Embed(
-                                title="❌ لم يتم التعرف",
-                                description="🔍 عذراً، ما قدرت أتعرف على هذه الصورة.\n\n"
-                                           "💡 **نصائح:**\n"
-                                           "• تأكد إن الصورة واضحة وفيها مشهد أنمي\n"
-                                           "• جرب صورة من زاوية مختلفة\n"
-                                           "• تأكد إن الأنمي في قاعدة بيانات Trace.moe",
-                                color=Theme.WARNING,
-                                timestamp=datetime.now(timezone.utc)
-                            )
-                            no_result_embed.set_footer(text=f"🌸 The Veyn • من: {message.author.name}")
-
-                            if image_url:
-                                no_result_embed.set_thumbnail(url=image_url)
-
-                            await processing_msg.edit(embed=no_result_embed)
-
-                    else:
-                        # خطأ في API
-                        error_embed_result = error_embed(f"حصل خطأ في التعرف (كود: {response.status}). حاول مرة أخرى.")
-                        await processing_msg.edit(embed=error_embed_result)
-
-        except asyncio.TimeoutError:
-            error_embed_result = error_embed("⏱️ انتهت مهلة الطلب. جرب مرة أخرى.")
-            await processing_msg.edit(embed=error_embed_result)
-
-        except Exception as e:
-            error_embed_result = error_embed(f"حصل خطأ: {str(e)}")
-            await processing_msg.edit(embed=error_embed_result)
+            await processing_msg.edit(embed=no_result_embed)
 
     except Exception as e:
-        error_msg = error_embed(f"حصل خطأ في المعالجة: {str(e)}")
-        await message.reply(embed=error_msg)
+        error_embed_result = error_embed(f"حصل خطأ: {str(e)}")
+        await processing_msg.edit(embed=error_embed_result)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1618,7 +1686,7 @@ async def news_broadcast_loop():
                             print(f"❌ خطأ في نشر الخبر: {e}")
                             continue
 
-            await asyncio.sleep(300)
+            await asyncio.sleep(300)  # 5 دقائق
 
         except Exception as e:
             print(f"❌ خطأ في حلقة الأخبار: {e}")
@@ -1632,7 +1700,7 @@ async def news_broadcast_loop():
 @bot.tree.command(name="help", description="مساعدة وأوامر البوت")
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="🌸 The Veyn v6.0 - المساعدة",
+        title="🌸 The Veyn v1 - المساعدة",
         description="أوامر البوت المتاحة:",
         color=Theme.CARD_BG,
         timestamp=datetime.now(timezone.utc)
