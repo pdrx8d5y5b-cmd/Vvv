@@ -1,5 +1,5 @@
 # 🔥 The Veyn — بوت الأنمي v6.0 Pro Edition
-# التعرف التلقائي على الصور في روم محدد + نظام النشر التلقائي
+# التعرف التلقائي على الصور + نظام النشر التلقائي
 # مُصلّح ومُحسّن بالكامل
 
 import discord
@@ -11,10 +11,18 @@ import os
 import json
 import base64
 import io
+import logging
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from typing import Optional, List, Dict
 from dataclasses import dataclass, asdict
+
+# إعداد الـ logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('TheVeyn')
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -56,7 +64,6 @@ class Database:
     def load(self):
         """تحميل البيانات من الملفات"""
         try:
-            # تحميل إعدادات الرومات
             if os.path.exists(CHANNELS_FILE):
                 with open(CHANNELS_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -64,26 +71,23 @@ class Database:
                         self.channels[int(k)] = ChannelConfig(**v)
                     self.notification_users = data.get('notifications', {})
 
-            # تحميل الكاش
             if os.path.exists(CACHE_FILE):
                 with open(CACHE_FILE, 'r', encoding='utf-8') as f:
                     cache = json.load(f)
                     self.last_anime_news_id = cache.get('last_anime_news_id', '')
 
-            # تحميل روم التعرف
             if os.path.exists(RECOGNITION_CHANNEL_FILE):
                 with open(RECOGNITION_CHANNEL_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.recognition_channel_id = data.get('channel_id')
 
-            print("✅ تم تحميل البيانات بنجاح")
+            logger.info("✅ تم تحميل البيانات بنجاح")
         except Exception as e:
-            print(f"❌ خطأ في تحميل البيانات: {e}")
+            logger.error(f"❌ خطأ في تحميل البيانات: {e}")
 
     def save(self):
         """حفظ البيانات إلى الملفات"""
         try:
-            # حفظ إعدادات الرومات
             data = {
                 'channels': {str(k): asdict(v) for k, v in self.channels.items()},
                 'notifications': self.notification_users
@@ -91,28 +95,26 @@ class Database:
             with open(CHANNELS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
-            # حفظ الكاش
             cache = {'last_anime_news_id': self.last_anime_news_id}
             with open(CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
 
-            # حفظ روم التعرف
             recognition_data = {'channel_id': self.recognition_channel_id}
             with open(RECOGNITION_CHANNEL_FILE, 'w', encoding='utf-8') as f:
                 json.dump(recognition_data, f, ensure_ascii=False, indent=2)
 
         except Exception as e:
-            print(f"❌ خطأ في حفظ البيانات: {e}")
+            logger.error(f"❌ خطأ في حفظ البيانات: {e}")
 
     def set_recognition_channel(self, channel_id: int):
         self.recognition_channel_id = channel_id
         self.save()
-        print(f"✅ تم تحديد روم التعرف: {channel_id}")
+        logger.info(f"✅ تم تحديد روم التعرف: {channel_id}")
 
     def clear_recognition_channel(self):
         self.recognition_channel_id = None
         self.save()
-        print("✅ تم مسح روم التعرف")
+        logger.info("✅ تم مسح روم التعرف")
 
     def add_channel(self, channel_id: int, category: str, role_id: int = None):
         self.channels[channel_id] = ChannelConfig(
@@ -122,7 +124,7 @@ class Database:
         )
         self.notification_users[channel_id] = []
         self.save()
-        print(f"✅ تم إضافة روم {channel_id} كفئة {category}")
+        logger.info(f"✅ تم إضافة روم {channel_id} كفئة {category}")
 
     def remove_channel(self, channel_id: int):
         if channel_id in self.channels:
@@ -130,7 +132,7 @@ class Database:
         if channel_id in self.notification_users:
             del self.notification_users[channel_id]
         self.save()
-        print(f"✅ تم إزالة روم {channel_id}")
+        logger.info(f"✅ تم إزالة روم {channel_id}")
 
     def get_channels(self, category: str = None) -> List[ChannelConfig]:
         if category:
@@ -154,7 +156,6 @@ class Database:
         return user_id in self.notification_users.get(channel_id, [])
 
 
-# إنشاء كائن قاعدة البيانات
 db = Database()
 
 
@@ -163,7 +164,7 @@ db = Database()
 # ═══════════════════════════════════════════════════════════════
 
 JIKAN_BASE = "https://api.jikan.moe/v4"
-TRACE_MOE_URL = "https://api.trace.moe/search"
+TRACE_MOE_URL = "https://trace.moe/api/search"
 
 _rate_limiter = asyncio.Semaphore(1)
 _jikan_cache = {}
@@ -201,7 +202,7 @@ async def jikan_get(endpoint: str, use_cache: bool = True) -> Optional[dict]:
                     elif r.status == 429:
                         await asyncio.sleep(3)
         except Exception as e:
-            print(f"❌ خطأ في Jikan API: {e}")
+            logger.error(f"❌ خطأ في Jikan API: {e}")
     return None
 
 
@@ -264,45 +265,45 @@ async def get_anime_recommendations(mal_id: int, limit: int = 6) -> List[dict]:
     return data.get("data", [])[:limit] if data else []
 
 
-async def search_characters(query: str, limit: int = 10) -> List[dict]:
-    """البحث عن شخصية أنمي"""
-    encoded_query = query.replace(" ", "%20")
-    data = await jikan_get(f"/characters?q={encoded_query}&limit={limit}&order=favorites&sort=desc")
-    return data.get("data", []) if data else []
-
-
 # ═══════════════════════════════════════════════════════════════
 # 🖼️ TRACE.MOE FUNCTIONS (للتعرف على الأنمي من الصور)
 # ═══════════════════════════════════════════════════════════════
 
 async def trace_moe_search(image_data: bytes) -> Optional[dict]:
-    """البحث في Trace.moe باستخدام الصورة"""
+    """البحث في Trace.moe باستخدام الصورة - الطريقة الصحيحة"""
     try:
+        logger.info("🔍 جاري البحث في Trace.moe...")
+
         async with aiohttp.ClientSession() as session:
             # تحويل الصورة لـ base64
             base64_image = base64.b64encode(image_data).decode('utf-8')
 
-            # إنشاء form data
-            form = aiohttp.FormData()
-            form.add_field(
-                'image',
-                base64_image,
-                filename='image.jpg',
-                content_type='image/jpeg'
-            )
+            # الطريقة الصحيحة لإرسال البيانات
+            payload = {
+                "image": f"data:image/jpeg;base64,{base64_image}"
+            }
 
             async with session.post(
                 TRACE_MOE_URL,
-                data=form,
+                json=payload,
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
+                logger.info(f"📡 Trace.moe Response Status: {response.status}")
+
                 if response.status == 200:
-                    return await response.json()
+                    result = await response.json()
+                    logger.info(f"✅ تم العثور على {len(result.get('result', []))} نتيجة")
+                    return result
                 else:
-                    print(f"❌ Trace.moe خطأ: {response.status}")
+                    text = await response.text()
+                    logger.error(f"❌ Trace.moe خطأ: {response.status} - {text}")
                     return None
+
+    except asyncio.TimeoutError:
+        logger.error("❌ Trace.moe انتهت المهلة")
+        return None
     except Exception as e:
-        print(f"❌ خطأ في Trace.moe: {e}")
+        logger.error(f"❌ خطأ في Trace.moe: {type(e).__name__} - {e}")
         return None
 
 
@@ -358,7 +359,6 @@ STATUS_AR = {
 # ═══════════════════════════════════════════════════════════════
 
 def get_embed_color(anime: dict) -> int:
-    """جلب لون الإمبيد حسب التصنيف"""
     genres = anime.get("genres", []) + anime.get("themes", [])
     for g in genres:
         name = g.get("name", "")
@@ -368,7 +368,6 @@ def get_embed_color(anime: dict) -> int:
 
 
 def get_image(anime: dict, img_type: str = "thumbnail") -> Optional[str]:
-    """جلب صورة الأنمي"""
     images = anime.get("images", {})
     jpg = images.get("jpg", {})
     if img_type == "banner":
@@ -377,8 +376,6 @@ def get_image(anime: dict, img_type: str = "thumbnail") -> Optional[str]:
 
 
 def get_char_image(char: dict) -> Optional[str]:
-    """جلب صورة الشخصية"""
-    # قد تكون الشخصية dict مستقل أو داخل مفتاح "character"
     if isinstance(char, dict):
         images = char.get("images", {})
         return images.get("jpg", {}).get("image_url")
@@ -386,20 +383,17 @@ def get_char_image(char: dict) -> Optional[str]:
 
 
 def genres_text(anime: dict, max_items: int = 4) -> str:
-    """تحويل التصنيفات لنص عربي"""
     genres = anime.get("genres", []) + anime.get("themes", [])
     names = [GENRE_AR.get(g.get("name", ""), g.get("name", "")) for g in genres[:max_items]]
     return " · ".join(names) if names else "—"
 
 
 def status_label(status: str) -> str:
-    """تحويل الحالة لنص عربي"""
     _, txt = STATUS_AR.get(status, ("❓", status))
     return txt
 
 
 def synopsis_short(anime: dict, limit: int = 300) -> str:
-    """تلخيص القصة"""
     text = anime.get("synopsis") or "لا يوجد وصف متاح."
     if len(text) > limit:
         return text[:limit].rsplit(" ", 1)[0] + "..."
@@ -407,7 +401,6 @@ def synopsis_short(anime: dict, limit: int = 300) -> str:
 
 
 def year_label(anime: dict) -> str:
-    """استخراج السنة"""
     year = anime.get("year")
     if not year:
         aired = anime.get("aired", {})
@@ -417,12 +410,10 @@ def year_label(anime: dict) -> str:
 
 
 def medal_emoji(rank: int) -> str:
-    """إيموجي الميدالية"""
     return {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, "⭐")
 
 
 def rating_stars(score: Optional[float]) -> str:
-    """تحويل التقييم لنجوم"""
     if score is None:
         return "☆☆☆☆☆"
     full = int(score // 2)
@@ -431,27 +422,22 @@ def rating_stars(score: Optional[float]) -> str:
 
 
 def format_number(num: int) -> str:
-    """تنسيق الأرقام"""
     return f"{num:,}"
 
 
 def get_category_emoji(category: str) -> str:
-    """إيموجي الفئة"""
     return {"anime": "🎬", "manga": "📚", "manhwa": "🇰🇷"}.get(category, "📰")
 
 
 def get_category_name(category: str) -> str:
-    """اسم الفئة بالعربي"""
     return {"anime": "أنمي", "manga": "مانجا", "manhwa": "مانهوا"}.get(category, "أخبار")
 
 
 def get_category_color(category: str) -> int:
-    """لون الفئة"""
     return {"anime": Theme.ACCENT, "manga": Theme.MANGA, "manhwa": Theme.MANHWA}.get(category, Theme.INFO)
 
 
 def format_timestamp(seconds: float) -> str:
-    """تحويل الثواني لصيغة وقت HH:MM:SS"""
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
@@ -463,7 +449,6 @@ def format_timestamp(seconds: float) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 def build_main_embed(anime: dict, prefix: str = "") -> discord.Embed:
-    """إنشاء الإمبيد الرئيسي"""
     title = anime.get("title", "؟")
     title_jp = anime.get("title_japanese", "")
     mal_id = anime.get("mal_id", 0)
@@ -516,7 +501,6 @@ def build_main_embed(anime: dict, prefix: str = "") -> discord.Embed:
 
 
 def build_search_embed(query: str, results: List[dict]) -> discord.Embed:
-    """إنشاء امبد نتائج البحث"""
     embed = discord.Embed(
         title=f"🔍 نتائج البحث: {query}",
         description=f"تم العثور على **{len(results)}** نتيجة\nاختر أنمي من القائمة 👇",
@@ -536,7 +520,6 @@ def build_search_embed(query: str, results: List[dict]) -> discord.Embed:
 
 
 def build_top_embed(anime_list: List[dict]) -> discord.Embed:
-    """إنشاء امبد أفضل 10"""
     embed = discord.Embed(
         title="🏆 Top 10 Anime",
         description="أفضل الأنميات على MyAnimeList",
@@ -556,8 +539,6 @@ def build_top_embed(anime_list: List[dict]) -> discord.Embed:
 
 
 def build_character_embed(anime: dict, character: dict) -> discord.Embed:
-    """إنشاء امبد الشخصية"""
-    # استخراج بيانات الشخصية
     if "character" in character:
         char_data = character["character"]
     else:
@@ -594,7 +575,6 @@ def build_character_embed(anime: dict, character: dict) -> discord.Embed:
 
 
 def build_news_embed(anime: dict, category: str = "anime") -> discord.Embed:
-    """إنشاء امبد الخبر"""
     emoji = get_category_emoji(category)
     color = get_category_color(category)
     cat_name = get_category_name(category)
@@ -626,7 +606,6 @@ def build_news_embed(anime: dict, category: str = "anime") -> discord.Embed:
 
 
 def build_notification_embed(channel_config: ChannelConfig) -> discord.Embed:
-    """إنشاء امبد الإشعارات"""
     cat_name = get_category_name(channel_config.category)
     emoji = get_category_emoji(channel_config.category)
 
@@ -652,7 +631,6 @@ def build_recognition_result_embed(
     mal_url: str = None,
     full_anime: dict = None
 ) -> discord.Embed:
-    """إنشاء امبد نتيجة التعرف"""
     embed = discord.Embed(
         title=f"🎬 {anime_title}",
         color=Theme.ACCENT,
@@ -674,11 +652,9 @@ def build_recognition_result_embed(
         indicator = "🟢" if similarity >= 0.8 else "🟡" if similarity >= 0.5 else "🔴"
         embed.add_field(name="📊 التشابه", value=f"**{similarity_percent}%** {indicator}", inline=True)
 
-    # التصنيفات من معلومات MAL
     if full_anime and (genres := genres_text(full_anime, 3)):
         embed.add_field(name="🎭 التصنيفات", value=genres, inline=False)
 
-    # التقييم من MAL
     if full_anime and full_anime.get('score'):
         embed.add_field(name="⭐ التقييم", value=f"**{full_anime.get('score')}/10**", inline=True)
 
@@ -846,7 +822,6 @@ class CharacterListView(discord.ui.View):
         )
 
         for char in chunk:
-            # استخراج بيانات الشخصية
             if "character" in char:
                 char_data = char["character"]
             else:
@@ -899,7 +874,6 @@ class CharacterSelectView(discord.ui.View):
 
         options = []
         for i, char in enumerate(characters[:25]):
-            # استخراج بيانات الشخصية
             if "character" in char:
                 char_data = char["character"]
             else:
@@ -999,13 +973,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
+    logger.info(f"🤖 جاري مزامنة الأوامر...")
     await bot.tree.sync()
     await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.watching, name="🌸 الأنمي | The Veyn v6.0")
+        activity=discord.Activity(type=discord.ActivityType.watching, name="🌸 الأنمي | The Veyn v1")
     )
-    print(f"✅ The Veyn v6.0 — {bot.user} — جاهز!")
+    logger.info(f"✅ The Veyn v1 — {bot.user} — جاهز!")
 
-    # بدء مهمة النشر التلقائي
     bot.loop.create_task(news_broadcast_loop())
 
 
@@ -1405,7 +1379,6 @@ async def list_cmd(interaction: discord.Interaction):
 
 @bot.tree.command(name="setrecog", description="تحديد روم للتعرف التلقائي على الصور")
 async def setrecog_cmd(interaction: discord.Interaction):
-    """تحديد الروم الحالي كروم للتعرف التلقائي على صور الأنمي"""
     await interaction.response.defer(ephemeral=True)
 
     if not interaction.user.guild_permissions.administrator:
@@ -1442,7 +1415,6 @@ async def setrecog_cmd(interaction: discord.Interaction):
 
 @bot.tree.command(name="clearrecog", description="إزالة روم التعرف التلقائي")
 async def clearrecog_cmd(interaction: discord.Interaction):
-    """إزالة روم التعرف التلقائي"""
     await interaction.response.defer(ephemeral=True)
 
     if not interaction.user.guild_permissions.administrator:
@@ -1473,7 +1445,6 @@ async def clearrecog_cmd(interaction: discord.Interaction):
 
 @bot.tree.command(name="recogstatus", description="عرض حالة نظام التعرف")
 async def recogstatus_cmd(interaction: discord.Interaction):
-    """عرض الروم المحدد للتعرف التلقائي"""
     await interaction.response.defer(ephemeral=True)
 
     if db.recognition_channel_id:
@@ -1510,14 +1481,17 @@ async def recogstatus_cmd(interaction: discord.Interaction):
 @bot.event
 async def on_message(message: discord.Message):
     """معالجة الرسائل - التعرف التلقائي على الصور"""
+    # تجاهل رسائل البوتات
     if message.author.bot:
         await bot.process_commands(message)
         return
 
+    # تجاهل الرسائل بدون مرفقات
     if not message.attachments:
         await bot.process_commands(message)
         return
 
+    # البحث عن صورة
     image_attachment = None
     for attachment in message.attachments:
         if attachment.content_type and attachment.content_type.startswith('image/'):
@@ -1530,6 +1504,7 @@ async def on_message(message: discord.Message):
 
     # التحقق إذا كان الروم هو روم التعرف المحدد
     if db.recognition_channel_id and message.channel.id == db.recognition_channel_id:
+        logger.info(f"📸 تم اكتشاف صورة في روم التعرف - من: {message.author}")
         await process_auto_recognition(message, image_attachment)
         return
 
@@ -1538,24 +1513,30 @@ async def on_message(message: discord.Message):
 
 async def process_auto_recognition(message: discord.Message, image_attachment: discord.Attachment):
     """معالجة التعرف التلقائي على الصورة"""
+    processing_msg = None
 
     try:
+        # إرسال رسالة المعالجة
         await message.channel.typing()
 
-        # رسالة المعالجة
         processing_embed = discord.Embed(
             title="🔍 جاري التحليل...",
             description=f"⏳ يتم التعرف على الصورة...\n"
-                       f"📷 من: {message.author.mention}",
+                       f"📷 من: {message.author.mention}\n\n"
+                       f"🎬 جاري البحث في قاعدة بيانات Trace.moe...",
             color=Theme.INFO,
             timestamp=datetime.now(timezone.utc)
         )
         processing_msg = await message.reply(embed=processing_embed)
 
+        logger.info(f"📥 جاري تحميل الصورة: {image_attachment.filename}")
+
         # تحميل الصورة
         image_data = await image_attachment.read()
+        logger.info(f"✅ تم تحميل الصورة - الحجم: {len(image_data)} bytes")
 
         # البحث في Trace.moe
+        logger.info("🔍 جاري البحث في Trace.moe...")
         trace_result = await trace_moe_search(image_data)
 
         if trace_result and trace_result.get('result') and len(trace_result['result']) > 0:
@@ -1566,6 +1547,8 @@ async def process_auto_recognition(message: discord.Message, image_attachment: d
             from_time = best_match.get('from', 0)
             similarity = best_match.get('similarity', 0)
             image_preview = best_match.get('image')
+
+            logger.info(f"✅ تم العثور على نتيجة - الأنمي: {anime_info.get('title')}")
 
             # تحويل الوقت
             time_str = format_timestamp(from_time)
@@ -1579,6 +1562,7 @@ async def process_auto_recognition(message: discord.Message, image_attachment: d
             # جلب معلومات إضافية من MAL
             full_anime = None
             if mal_id:
+                logger.info(f"📡 جاري جلب معلومات MAL لـ: {mal_id}")
                 full_anime = await get_anime_details(mal_id)
 
             # إنشاء امبد النتيجة
@@ -1595,11 +1579,13 @@ async def process_auto_recognition(message: discord.Message, image_attachment: d
             result_embed.set_footer(text=f"🌸 The Veyn • تم التحليل بنجاح | من: {message.author.name}")
 
             await processing_msg.edit(embed=result_embed)
+            logger.info(f"✅ تم إرسال نتيجة التعرف لـ {message.author}")
 
         else:
+            logger.warning("❌ ما تم العثور على نتائج في Trace.moe")
             # ما لقي نتيجة
             no_result_embed = discord.Embed(
-                title="❌ لم يتم التعرف",
+                title="❌ لم يتم التعرف على الأنمي",
                 description="🔍 عذراً، ما قدرت أتعرف على هذه الصورة.\n\n"
                            "💡 **نصائح:**\n"
                            "• تأكد إن الصورة واضحة وفيها مشهد أنمي\n"
@@ -1614,8 +1600,13 @@ async def process_auto_recognition(message: discord.Message, image_attachment: d
             await processing_msg.edit(embed=no_result_embed)
 
     except Exception as e:
-        error_embed_result = error_embed(f"حصل خطأ: {str(e)}")
-        await processing_msg.edit(embed=error_embed_result)
+        logger.error(f"❌ خطأ في process_auto_recognition: {type(e).__name__} - {e}")
+
+        if processing_msg:
+            error_embed_result = error_embed(f"حصل خطأ أثناء التحليل: {str(e)}")
+            await processing_msg.edit(embed=error_embed_result)
+        else:
+            await message.reply(embed=error_embed(f"حصل خطأ أثناء التحليل: {str(e)}"))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1625,6 +1616,7 @@ async def process_auto_recognition(message: discord.Message, image_attachment: d
 async def news_broadcast_loop():
     """حلقة نشر الأخبار التلقائية"""
     await bot.wait_until_ready()
+    logger.info("📡 بدأ نظام نشر الأخبار التلقائي")
 
     while not bot.is_closed():
         try:
@@ -1683,13 +1675,13 @@ async def news_broadcast_loop():
                             await asyncio.sleep(2)
 
                         except Exception as e:
-                            print(f"❌ خطأ في نشر الخبر: {e}")
+                            logger.error(f"❌ خطأ في نشر الخبر: {e}")
                             continue
 
             await asyncio.sleep(300)  # 5 دقائق
 
         except Exception as e:
-            print(f"❌ خطأ في حلقة الأخبار: {e}")
+            logger.error(f"❌ خطأ في حلقة الأخبار: {e}")
             await asyncio.sleep(60)
 
 
@@ -1756,4 +1748,5 @@ async def help_cmd(interaction: discord.Interaction):
 # ═══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    logger.info("🚀 جاري تشغيل البوت...")
     bot.run(TOKEN)
