@@ -1,4 +1,4 @@
-# 🔥 The Veyn — بوت الأنمي v6.0 Pro Edition
+# 🔥 The Veyn — بوت الأنمي v1.0 Pro Edition
 # التعرف التلقائي على الصور + نظام النشر التلقائي
 # مُصلّح ومُحسّن بالكامل
 
@@ -164,7 +164,7 @@ db = Database()
 # ═══════════════════════════════════════════════════════════════
 
 JIKAN_BASE = "https://api.jikan.moe/v4"
-TRACE_MOE_URL = "https://trace.moe/api/search"
+TRACE_MOE_URL = "https://api.trace.moe/search"
 
 _rate_limiter = asyncio.Semaphore(1)
 _jikan_cache = {}
@@ -275,17 +275,13 @@ async def trace_moe_search(image_data: bytes) -> Optional[dict]:
         logger.info("🔍 جاري البحث في Trace.moe...")
 
         async with aiohttp.ClientSession() as session:
-            # تحويل الصورة لـ base64
-            base64_image = base64.b64encode(image_data).decode('utf-8')
-
-            # الطريقة الصحيحة لإرسال البيانات
-            payload = {
-                "image": f"data:image/jpeg;base64,{base64_image}"
-            }
+            # الطريقة الصحيحة: نرسل الصورة مباشرة كـ binary data
+            form = aiohttp.FormData()
+            form.add_field('image', image_data, filename='image.jpg', content_type='image/jpeg')
 
             async with session.post(
                 TRACE_MOE_URL,
-                json=payload,
+                data=form,
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
                 logger.info(f"📡 Trace.moe Response Status: {response.status}")
@@ -978,7 +974,7 @@ async def on_ready():
     await bot.change_presence(
         activity=discord.Activity(type=discord.ActivityType.watching, name="🌸 الأنمي | The Veyn v1")
     )
-    logger.info(f"✅ The Veyn v1 — {bot.user} — جاهز!")
+    logger.info(f"✅ The Veyn v1.0 — {bot.user} — جاهز!")
 
     bot.loop.create_task(news_broadcast_loop())
 
@@ -1692,7 +1688,7 @@ async def news_broadcast_loop():
 @bot.tree.command(name="help", description="مساعدة وأوامر البوت")
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="🌸 The Veyn v1 - المساعدة",
+        title="🌸 The Veyn v1.0 - المساعدة",
         description="أوامر البوت المتاحة:",
         color=Theme.CARD_BG,
         timestamp=datetime.now(timezone.utc)
