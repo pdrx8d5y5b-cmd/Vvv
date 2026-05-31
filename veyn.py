@@ -625,7 +625,8 @@ def build_recognition_result_embed(
     similarity: float = None,
     image_preview: str = None,
     mal_url: str = None,
-    full_anime: dict = None
+    full_anime: dict = None,
+    characters: list = None
 ) -> discord.Embed:
     embed = discord.Embed(
         title=f"🎬 {anime_title}",
@@ -659,6 +660,28 @@ def build_recognition_result_embed(
 
     if image_preview:
         embed.set_thumbnail(url=image_preview)
+
+    # إضافة الشخصيات إن وجدت
+    if characters and len(characters) > 0:
+        char_names = []
+        for char in characters[:5]:  # أعلام 5 شخصيات فقط
+            if isinstance(char, dict):
+                if "character" in char:
+                    char_data = char["character"]
+                else:
+                    char_data = char
+                name = char_data.get("name", "؟") if isinstance(char_data, dict) else "؟"
+                role = char.get("role", "")
+                char_names.append(f"👤 **{name}** ({role})")
+            elif isinstance(char, str):
+                char_names.append(f"👤 **{char}**")
+
+        if char_names:
+            embed.add_field(
+                name="🎭 الشخصيات في المشهد",
+                value="\n".join(char_names),
+                inline=False
+            )
 
     embed.set_footer(text="🌸 The Veyn • التعرف التلقائي")
     return embed
@@ -1557,9 +1580,16 @@ async def process_auto_recognition(message: discord.Message, image_attachment: d
 
             # جلب معلومات إضافية من MAL
             full_anime = None
+            anime_characters = []
             if mal_id:
                 logger.info(f"📡 جاري جلب معلومات MAL لـ: {mal_id}")
                 full_anime = await get_anime_details(mal_id)
+
+                # جلب الشخصيات
+                logger.info(f"🎭 جاري جلب شخصيات الأنمي...")
+                anime_characters = await get_characters(mal_id)
+                if anime_characters:
+                    logger.info(f"✅ تم العثور على {len(anime_characters)} شخصية")
 
             # إنشاء امبد النتيجة
             result_embed = build_recognition_result_embed(
@@ -1570,7 +1600,8 @@ async def process_auto_recognition(message: discord.Message, image_attachment: d
                 similarity=similarity,
                 image_preview=image_preview,
                 mal_url=mal_url,
-                full_anime=full_anime
+                full_anime=full_anime,
+                characters=anime_characters
             )
             result_embed.set_footer(text=f"🌸 The Veyn • تم التحليل بنجاح | من: {message.author.name}")
 
