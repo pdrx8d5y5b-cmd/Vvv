@@ -1,7 +1,7 @@
 # 🔥 The Veyn — بوت الأنمي v1.0 Pro Edition
 # التعرف التلقائي على الصور + نظام النشر التلقائي
 # مُصلّح ومُحسّن بالكامل
-# تم إصلاح: البحث عن الشخصيات أولاً
+ك
 
 import discord
 from discord.ext import commands
