@@ -1,8 +1,3 @@
-# 🔥 Uniq — بوت الأنمي v1.0 Pro Edition
-# التعرف التلقائي على الصور + نظام النشر التلقائي
-# مُصلّح ومُحسّن بالكامل
-# تم إصلاح: البحث عن الشخصيات أولاً
-
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -12,7 +7,6 @@ import os
 import json
 import base64
 import io
-
 
 import logging
 from datetime import datetime, timezone
@@ -1097,7 +1091,6 @@ class NotificationView(discord.ui.View):
     @discord.ui.button(label="🔔 اشتراك", style=discord.ButtonStyle.success, emoji="🔔", row=0)
     async def subscribe(self, interaction: discord.Interaction, btn: discord.ui.Button):
         user_id = interaction.user.id
-
         if db.is_user_subscribed(self.channel_id, user_id):
             db.remove_notification_user(self.channel_id, user_id)
             await interaction.response.send_message(
@@ -1414,4 +1407,507 @@ async def help_cmd(interaction: discord.Interaction):
 
 if __name__ == "__main__":
     logger.info("🚀 جاري تشغيل البوت...")
-    bot.run(TOKEN)
+    if TOKEN:
+        bot.run(TOKEN)
+    else:
+        logger.error("❌ لم يتم العثور على توكن البوت. يرجى التأكد من وجوده في ملف .env")
+
+
+@bot.tree.command(name="anime", description="البحث عن أنمي في MyAnimeList")
+@app_commands.describe(name="اسم الأنمي للبحث عنه")
+async def anime_cmd(interaction: discord.Interaction, name: str):
+    await interaction.response.defer()
+    results = await search_anime(name)
+    if results:
+        view = SearchDropdown(results, interaction.user.id)
+        await interaction.followup.send(embed=build_search_embed(name, results), view=view)
+    else:
+        await interaction.followup.send(embed=error_embed("ما لقيت أي أنمي بهذا الاسم."))
+
+
+@bot.tree.command(name="character", description="البحث عن شخصية أنمي")
+@app_commands.describe(name="اسم الشخصية للبحث عنها")
+async def character_cmd(interaction: discord.Interaction, name: str):
+    await interaction.response.defer()
+    characters = await search_character(name)
+    if characters:
+        view = CharacterSearchDropdown(characters, interaction.user.id)
+        await interaction.followup.send(embed=build_character_search_embed(name, characters), view=view)
+    else:
+        await interaction.followup.send(embed=error_embed("ما لقيت أي شخصية بهذا الاسم."))
+
+
+@bot.tree.command(name="suggest", description="الحصول على اقتراح أنمي عشوائي")
+async def suggest_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    anime = await get_random_anime()
+    if anime:
+        embed = build_main_embed(anime, "🎲 ")
+        view = AnimeActionsView(anime, interaction.user.id)
+        await interaction.followup.send(embed=embed, view=view)
+    else:
+        await interaction.followup.send(embed=error_embed("حصل خطأ أثناء جلب اقتراح الأنمي."))
+
+
+@bot.tree.command(name="top", description="عرض أفضل 10 أنمي")
+async def top_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    anime_list = await get_top_anime()
+    if anime_list:
+        embed = build_top_embed(anime_list)
+        await interaction.followup.send(embed=embed)
+    else:
+        await interaction.followup.send(embed=error_embed("لم أتمكن من جلب أفضل الأنميات."))
+
+
+@bot.tree.command(name="season", description="عرض أنمي الموسم الحالي")
+async def season_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    anime_list = await get_seasonal_anime()
+    if anime_list:
+        embed = discord.Embed(
+            title="🌸 أنمي الموسم الحالي",
+            description="أبرز أنميات الموسم",
+            color=Theme.ACCENT
+        )
+        for i, anime in enumerate(anime_list[:10]):
+            embed.add_field(name=f"{i+1}. {anime.get('title', '؟')}", value=f"⭐ {anime.get('score', '؟')}", inline=False)
+        await interaction.followup.send(embed=embed)
+    else:
+        await interaction.followup.send(embed=error_embed("لم أتمكن من جلب أنمي الموسم."))
+
+
+@bot.tree.command(name="upcoming", description="عرض الأنميات القادمة")
+async def upcoming_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    anime_list = await get_upcoming_anime()
+    if anime_list:
+        embed = discord.Embed(
+            title="⏳ أنميات قادمة",
+            description="قائمة بالأنميات التي لم تعرض بعد",
+            color=Theme.WARNING
+        )
+        for i, anime in enumerate(anime_list[:10]):
+            embed.add_field(name=f"{i+1}. {anime.get("title", "؟")}", value=f"تاريخ العرض: {anime.get("aired", {}).get("string", "قريباً")}", inline=False)
+        await interaction.followup.send(embed=embed)
+    else:
+        await interaction.followup.send(embed=error_embed("لم أتمكن من جلب الأنميات القادمة."))
+
+
+@bot.tree.command(name="airing", description="عرض الأنميات التي تعرض حالياً")
+async def airing_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    anime_list = await get_airing_anime()
+    if anime_list:
+        embed = discord.Embed(
+            title="🔄 أنميات تعرض حالياً",
+            description="قائمة بالأنميات التي تعرض حالياً",
+            color=Theme.INFO
+        )
+        for i, anime in enumerate(anime_list[:10]):
+            embed.add_field(name=f"{i+1}. {anime.get("title", "؟")}", value=f"⭐ {anime.get("score", "؟")}", inline=False)
+        await interaction.followup.send(embed=embed)
+    else:
+        await interaction.followup.send(embed=error_embed("لم أتمكن من جلب الأنميات التي تعرض حالياً."))
+
+
+@bot.tree.command(name="setrecog", description="تفعيل روم التعرف التلقائي في الروم الحالي (للمشرفين)")
+@app_commands.default_permissions(manage_channels=True)
+async def setrecog_cmd(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_channels:
+        await interaction.response.send_message(embed=error_embed("ليس لديك الصلاحيات الكافية لاستخدام هذا الأمر."), ephemeral=True)
+        return
+
+    db.set_recognition_channel(interaction.channel_id)
+    await interaction.response.send_message(embed=success_embed("تم التفعيل", f"تم تفعيل روم التعرف التلقائي في هذا الروم: <#{interaction.channel_id}>."), ephemeral=True)
+
+
+@bot.tree.command(name="clearrecog", description="إيقاف التعرف التلقائي على الصور (للمشرفين)")
+@app_commands.default_permissions(manage_channels=True)
+async def clearrecog_cmd(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_channels:
+        await interaction.response.send_message(embed=error_embed("ليس لديك الصلاحيات الكافية لاستخدام هذا الأمر."), ephemeral=True)
+        return
+
+    db.clear_recognition_channel()
+    await interaction.response.send_message(embed=success_embed("تم الإيقاف", "تم إيقاف التعرف التلقائي على الصور."), ephemeral=True)
+
+
+@bot.tree.command(name="recogstatus", description="عرض حالة نظام التعرف التلقائي (للمشرفين)")
+@app_commands.default_permissions(manage_channels=True)
+async def recogstatus_cmd(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_channels:
+        await interaction.response.send_message(embed=error_embed("ليس لديك الصلاحيات الكافية لاستخدام هذا الأمر."), ephemeral=True)
+        return
+
+    channel_id = db.recognition_channel_id
+    if channel_id:
+        await interaction.response.send_message(embed=info_embed("حالة التعرف التلقائي", f"التعرف التلقائي مفعل في الروم: <#{channel_id}>."), ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=info_embed("حالة التعرف التلقائي", "التعرف التلقائي غير مفعل في أي روم."), ephemeral=True)
+
+
+@bot.tree.command(name="setup", description="تخصيص الروم الحالي لفئة معينة (للمشرفين)")
+@app_commands.describe(category="الفئة (anime, manga, manhwa)", role_id="معرف الرول للإشعارات (اختياري)")
+@app_commands.default_permissions(manage_channels=True)
+async def setup_cmd(interaction: discord.Interaction, category: str, role_id: Optional[str] = None):
+    if not interaction.user.guild_permissions.manage_channels:
+        await interaction.response.send_message(embed=error_embed("ليس لديك الصلاحيات الكافية لاستخدام هذا الأمر."), ephemeral=True)
+        return
+
+    if category not in ["anime", "manga", "manhwa"]:
+        await interaction.response.send_message(embed=error_embed("الفئة غير صالحة. يجب أن تكون: anime, manga, manhwa."), ephemeral=True)
+        return
+
+    try:
+        role_id_int = int(role_id) if role_id else None
+    except ValueError:
+        await interaction.response.send_message(embed=error_embed("معرف الرول غير صالح. يجب أن يكون رقماً."), ephemeral=True)
+        return
+
+    db.add_channel(interaction.channel_id, category, role_id_int)
+    await interaction.response.send_message(embed=success_embed("تم التخصيص", f"تم تخصيص هذا الروم لفئة {get_category_name(category)}."), ephemeral=True)
+
+
+@bot.tree.command(name="remove", description="إزالة تخصيص الروم الحالي (للمشرفين)")
+@app_commands.default_permissions(manage_channels=True)
+async def remove_cmd(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_channels:
+        await interaction.response.send_message(embed=error_embed("ليس لديك الصلاحيات الكافية لاستخدام هذا الأمر."), ephemeral=True)
+        return
+
+    db.remove_channel(interaction.channel_id)
+    await interaction.response.send_message(embed=success_embed("تم الإزالة", "تم إزالة تخصيص هذا الروم."), ephemeral=True)
+
+
+@bot.tree.command(name="list", description="عرض الرومات المفعّلة (للمشرفين)")
+@app_commands.default_permissions(manage_channels=True)
+async def list_cmd(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_channels:
+        await interaction.response.send_message(embed=error_embed("ليس لديك الصلاحيات الكافية لاستخدام هذا الأمر."), ephemeral=True)
+        return
+
+    channels = db.get_channels()
+    if channels:
+        description = "\n".join([f"<#{c.channel_id}> - {get_category_name(c.category)}" for c in channels])
+        await interaction.response.send_message(embed=info_embed("الرومات المفعّلة", description), ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=info_embed("الرومات المفعّلة", "لا توجد رومات مفعلة حالياً."), ephemeral=True)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🤖 BOT SETUP
+# ═══════════════════════════════════════════════════════════════
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+
+bot = commands.Bot(command_prefix="/", intents=intents)
+
+
+@bot.event
+async def on_ready():
+    logger.info(f'Logged in as {bot.user.name} ({bot.user.id})')
+    await bot.tree.sync()
+    logger.info("Synced slash commands.")
+    bot.loop.create_task(news_broadcast_loop())
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    """معالجة الرسائل - التعرف التلقائي على الصور"""
+    # تجاهل رسائل البوت
+    if message.author.bot: return
+
+    # تجاهل الرسائل بدون مرفقات
+    if not message.attachments:
+        await bot.process_commands(message)
+        return
+
+    # معالجة الصور المرفقة
+    for attachment in message.attachments:
+        if 'image' in attachment.content_type:
+            await process_auto_recognition(message, attachment)
+            break # معالجة أول صورة فقط
+
+    await bot.process_commands(message)
+
+
+async def process_auto_recognition(message: discord.Message, image_attachment: discord.Attachment):
+    """معالجة التعرف التلقائي على الصور (الأنمي والشخصيات)"""
+    processing_msg = None
+    try:
+        recognition_channel_id = db.recognition_channel_id
+        if not recognition_channel_id or message.channel.id != recognition_channel_id:
+            return
+
+        image_data = await image_attachment.read()
+        processing_msg = await message.reply(embed=loading_embed("جاري تحليل الصورة..."))
+
+        # 1. محاولة التعرف على الشخصية باستخدام SauceNAO
+        logger.info("🔍 محاولة التعرف على الشخصية باستخدام SauceNAO...")
+        saucenao_result = await saucenao_search(image_data)
+
+        if saucenao_result and saucenao_result.get("results"):
+            best_match = saucenao_result["results"][0]
+            header = best_match.get("header", {})
+            data = best_match.get("data", {})
+            ext_urls = data.get("ext_urls", [])
+
+            character_name = data.get("creator") or data.get("character") or "غير معروف"
+            similarity = float(header.get("similarity", 0))
+
+            if similarity > 70: # نسبة تشابه عالية تعتبر كافية للتعرف على الشخصية
+                embed = discord.Embed(
+                    title=f"🎭 تم التعرف على الشخصية: {character_name}",
+                    description=f"**التشابه:** {similarity:.2f}%\n**المصدر:** [اضغط هنا]({source_url})",
+                    color=Theme.PURPLE
+                )
+                if header.get("thumbnail"):
+                    embed.set_thumbnail(url=header["thumbnail"])
+                embed.set_footer(text=f"🌸 Uniq • تعرف على الشخصيات | من: {message.author.name}")
+                await processing_msg.edit(embed=embed)
+                logger.info(f"✅ تم التعرف على الشخصية بنجاح لـ {message.author}")
+                return
+            else:
+                logger.info("⚠️ نسبة تشابه SauceNAO منخفضة، جاري محاولة Trace.moe...")
+
+        # 2. إذا لم يتم التعرف على الشخصية أو كانت نسبة التشابه منخفضة، نعود لـ Trace.moe للأنمي
+        logger.info("🔍 جاري البحث في Trace.moe عن الأنمي...")
+        trace_result = await trace_moe_search(image_data)
+
+        if trace_result and trace_result.get("result"):
+            best_match = trace_result["result"][0]
+            anime_info = best_match.get("anilist", {})
+            from_time = best_match.get("from", 0)
+            to_time = best_match.get("to", 0)
+            episode_info = best_match.get("episode", "?")
+            similarity = best_match.get("similarity", 0)
+            image_preview = best_match.get("image")
+
+            # تحويل نسبة التشابه إلى مئوية
+            similarity_percent = round(similarity * 100, 2)
+            indicator = "✅" if similarity_percent > 87 else ("⚠️" if similarity_percent > 80 else "❌")
+
+            # تحويل الوقت
+            time_str = format_timestamp(from_time)
+
+            # معلومات الأنمي
+            mal_id = anime_info.get("mal_id")
+            anime_title = anime_info.get("title", "غير معروف")
+            anime_title_jp = anime_info.get("title_native", "")
+            mal_url = f"https://myanimelist.net/anime/{mal_id}" if mal_id else None
+
+            # جلب معلومات إضافية من MAL
+            full_anime = None
+            anime_characters = []
+            if mal_id:
+                logger.info(f"📡 جاري جلب معلومات MAL لـ: {mal_id}")
+                full_anime = await get_anime_details(mal_id)
+
+                # جلب الشخصيات
+                logger.info(f"🎭 جاري جلب شخصيات الأنمي...")
+                anime_characters = await get_characters(mal_id)
+                if anime_characters:
+                    logger.info(f"✅ تم العثور على {len(anime_characters)} شخصية")
+
+            # إنشاء امبد النتيجة
+            result_embed = build_recognition_result_embed(
+                anime_title=anime_title,
+                anime_title_jp=anime_title_jp if anime_title_jp else None,
+                episode=str(episode_info),
+                timestamp_str=time_str,
+                similarity=similarity,
+                image_preview=image_preview,
+                mal_url=mal_url,
+                full_anime=full_anime,
+                characters=anime_characters
+            )
+            result_embed.set_footer(text=f"🌸 Uniq • تم التحليل بنجاح | من: {message.author.name}")
+
+            await processing_msg.edit(embed=result_embed)
+            logger.info(f"✅ تم إرسال نتيجة التعرف لـ {message.author}")
+
+        else:
+            logger.warning("❌ ما تم العثور على نتائج في Trace.moe")
+            # ما لقي نتيجة
+            no_result_embed = discord.Embed(
+                title="❌ لم يتم التعرف على الأنمي",
+                description="🔍 عذراً، ما قدرت أتعرف على هذه الصورة.\n\n"
+                           "💡 **نصائح:**\n"
+                           "• تأكد إن الصورة واضحة وفيها مشهد أنمي\n"
+                           "• جرب صورة من زاوية مختلفة\n"
+                           "• تأكد إن الأنمي في قاعدة بيانات Trace.moe",
+                color=Theme.WARNING,
+                timestamp=datetime.now(timezone.utc)
+            )
+            no_result_embed.set_image(url=image_attachment.url)
+            no_result_embed.set_footer(text=f"🌸 Uniq • من: {message.author.name}")
+
+            await processing_msg.edit(embed=no_result_embed)
+
+    except Exception as e:
+        logger.error(f"❌ خطأ في process_auto_recognition: {type(e).__name__} - {e}")
+
+        if processing_msg:
+            error_embed_result = error_embed(f"حصل خطأ أثناء التحليل: {str(e)}")
+            await processing_msg.edit(embed=error_embed_result)
+        else:
+            await message.reply(embed=error_embed(f"حصل خطأ أثناء التحليل: {str(e)}"))
+
+
+# ═══════════════════════════════════════════════════════════════
+# 📡 NEWS BROADCAST SYSTEM
+# ═══════════════════════════════════════════════════════════════
+
+async def news_broadcast_loop():
+    """حلقة نشر الأخبار التلقائية"""
+    await bot.wait_until_ready()
+    logger.info("📡 بدأ نظام نشر الأخبار التلقائي")
+
+    while not bot.is_closed():
+        try:
+            anime_list = await get_seasonal_anime(20)
+
+            for anime in anime_list[:5]:
+                mal_id = str(anime.get("mal_id", ""))
+
+                if mal_id and mal_id != db.last_anime_news_id:
+                    db.last_anime_news_id = mal_id
+                    db.save()
+
+                    channels = db.get_channels("anime")
+
+                    for channel_config in channels:
+                        try:
+                            channel = bot.get_channel(channel_config.channel_id)
+                            if not channel:
+                                continue
+
+                            # حذف رسالة الإشعارات القديمة
+                            if channel_config.notification_msg_id:
+                                try:
+                                    old_msg = await channel.fetch_message(channel_config.notification_msg_id)
+                                    await old_msg.delete()
+                                except:
+                                    pass
+
+                            # نشر الخبر
+                            news_embed = build_news_embed(anime, "anime")
+                            notification_view = NotificationView(channel_config.channel_id, "anime")
+
+                            news_msg = await channel.send(embed=news_embed, view=notification_view)
+
+                            channel_config.notification_msg_id = news_msg.id
+                            db.save()
+
+                            # إشعار للمشتركين
+                            subscribers = db.notification_users.get(channel_config.channel_id, [])
+                            for user_id in subscribers:
+                                try:
+                                    user = await bot.fetch_user(user_id)
+                                    if user:
+                                        await user.send(
+                                            embed=discord.Embed(
+                                                title=f"🎬 خبر أنمي جديد!",
+                                                description=f"**{anime.get(\'title\', \'؟\')}**\n"
+                                                           f"⭐ {anime.get(\'score\', \'؟\')}\n\n"
+                                                           f"📁 تم النشر في: {channel.name}",
+                                                color=Theme.ACCENT
+                                            )
+                                        )
+                                except:
+                                    pass
+
+                            await asyncio.sleep(2)
+
+                        except Exception as e:
+                            logger.error(f"❌ خطأ في نشر الخبر: {e}")
+                            continue
+
+            await asyncio.sleep(300)  # 5 دقائق
+
+        except Exception as e:
+            logger.error(f"❌ خطأ في حلقة الأخبار: {e}")
+            await asyncio.sleep(60)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 📊 HELP COMMAND
+# ═══════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="help", description="مساعدة وأوامر البوت")
+async def help_cmd(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🌸 Uniq v1.0 - المساعدة",
+        description="أوامر البوت المتاحة:",
+        color=Theme.CARD_BG,
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    embed.add_field(
+        name="🔍 البحث",
+        value="`/anime [اسم]` - البحث عن أنمي\n"
+              "`/character [اسم]` - البحث عن شخصية (يبحث عن الشخصيات أولاً!)\n"
+              "`/suggest` - اقتراح عشوائي",
+        inline=False
+    )
+
+    embed.add_field(
+        name="📊 التصنيفات",
+        value="`/top` - أفضل 10 أنمي\n"
+              "`/season` - أنمي الموسم\n"
+              "`/upcoming` - أنمي قادم\n"
+              "`/airing` - يعرض حالياً",
+        inline=False
+    )
+
+    embed.add_field(
+        name="📰 الأخبار",
+        value="`/news` - أخبار أسبوعية\n"
+              "`/reviews` - تقييمات أسبوعية",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🖼️ التعرف التلقائي (للمشرفين)",
+        value="`/setrecog` - تفعيل روم التعرف في الروم الحالي\n"
+              "`/clearrecog` - إيقاف التعرف التلقائي\n"
+              "`/recogstatus` - عرض حالة النظام\n\n"
+              "📸 أي صورة تُرسل هناك تُحلل تلقائياً!",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🔧 تخصيص الرومات (للمشرفين)",
+        value="`/setup anime|manga|manhwa` - تخصيص الروم الحالي\n"
+              "`/remove` - إزالة الروم\n"
+              "`/list` - عرض الرومات المفعّلة",
+        inline=False
+    )
+
+    embed.set_footer(text="🌸 Uniq • بوت الأنمي العربي")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🚀 RUN
+# ═══════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    logger.info("🚀 جاري تشغيل البوت...")
+    if TOKEN:
+        bot.run(TOKEN)
+    else:
+        logger.error("❌ لم يتم العثور على توكن البوت. يرجى التأكد من وجوده في ملف .env"))
+
+
+@bot.tree.command(name="news", description="عرض الأخبار الأسبوعية (غير مفعل حالياً)")
+async def news_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=info_embed("الأخبار", "عذراً، أمر الأخبار غير مفعل حالياً."), ephemeral=True)
+
+
+@bot.tree.command(name="reviews", description="عرض التقييمات الأسبوعية (غير مفعل حالياً)")
+async def reviews_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=info_embed("التقييمات", "عذراً، أمر التقييمات غير مفعل حالياً."), ephemeral=True)
