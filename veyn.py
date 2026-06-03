@@ -12,7 +12,7 @@ import os
 import json
 import base64
 import io
-from saucenao_api import SauceNao
+
 
 import logging
 from datetime import datetime, timezone
@@ -27,16 +27,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger('Uniq')
 
-load_dotenv()
+
 TOKEN = os.getenv("TOKEN")
-SAUCENAO_API_KEY = os.getenv("SAUCENAO_API_KEY")
+SAUCENAO_API_KEY = "c7626f0f3cb1519513dea1ca5d2a2f307d2a5327"
 
 
 # ═══════════════════════════════════════════════════════════════
 # 📁 FILE PATHS
 # ═══════════════════════════════════════════════════════════════
 
-DATA_DIR = "/workspace/data"
+DATA_DIR = "/home/ubuntu/data"
 CHANNELS_FILE = f"{DATA_DIR}/channels.json"
 CACHE_FILE = f"{DATA_DIR}/cache.json"
 RECOGNITION_CHANNEL_FILE = f"{DATA_DIR}/recognition_channel.json"
@@ -351,7 +351,7 @@ async def trace_moe_search(image_data: bytes) -> Optional[dict]:
 
                 if response.status == 200:
                     result = await response.json()
-                    logger.info(f"✅ تم العثور على {len(result.get('result', []))} نتيجة")
+                    logger.info(f"✅ تم العثور على {len(result.get('result', []))} نتيجة في Trace.moe")
                     return result
                 else:
                     text = await response.text()
@@ -367,134 +367,81 @@ async def trace_moe_search(image_data: bytes) -> Optional[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 🎨 THEME & COLORS
+# 🎨 THEME & UTILS
 # ═══════════════════════════════════════════════════════════════
 
 class Theme:
-    BG = 0x0D0D0D
-    CARD_BG = 0x1A1A2E
-    ACCENT = 0xFF6B35
-    SECONDARY = 0xF7931A
-    SUCCESS = 0x00D26A
-    DANGER = 0xFF3860
-    WARNING = 0xFFE66D
-    PURPLE = 0x9D4EDD
-    INFO = 0x3A86FF
-    MANGA = 0x06D6A0
-    MANHWA = 0xE63946
+    BG = 0x2B2D31
+    CARD_BG = 0x313338
+    ACCENT = 0x5865F2
+    PURPLE = 0x9B59B6
+    SUCCESS = 0x2ECC71
+    DANGER = 0xE74C3C
+    WARNING = 0xF1C40F
+    INFO = 0x3498DB
 
-    GENRE_COLORS = {
-        "Action": 0xFF3860, "Adventure": 0xFF9F1C, "Comedy": 0xFFE66D,
-        "Drama": 0x9D4EDD, "Fantasy": 0x7B2CBF, "Horror": 0xC1121F,
-        "Mystery": 0x3A86FF, "Romance": 0xFF006E, "Sci-Fi": 0x00F5D4,
-        "Slice of Life": 0xFB8500, "Sports": 0x06D6A0, "Supernatural": 0x8338EC,
-        "Psychological": 0xE63946, "Thriller": 0xD00000, "Mecha": 0x6C757D,
-        "Music": 0xF72585, "Isekai": 0xFF6B35, "Harem": 0xE63946,
-        "Ecchi": 0xF4A261, "Shounen": 0xFFE66D, "Shoujo": 0xFF006E,
-        "Seinen": 0x3D405B, "default": 0xFF6B35,
-    }
-
-
-GENRE_AR = {
-    "Action": "⚔️ أكشن", "Adventure": "🗺️ مغامرة", "Comedy": "😂 كوميديا",
-    "Drama": "🎭 دراما", "Fantasy": "✨ فانتازيا", "Horror": "👻 رعب",
-    "Mystery": "🔮 غموض", "Romance": "💕 رومانسي", "Sci-Fi": "🚀 خيال علمي",
-    "Slice of Life": "☀️ حياة يومية", "Sports": "⚽ رياضة",
-    "Supernatural": "👁️ خارق للطبيعة", "Thriller": "🔪 إثارة",
-    "Mecha": "🤖 ميكا", "Music": "🎵 موسيقى", "Psychological": "🧠 نفسي",
-    "Shounen": "🔥 شونن", "Shoujo": "🌸 شوجو", "Seinen": "🌑 سينن",
-    "Isekai": "🌐 إيسيكاي", "Harem": "💝 حريم", "Ecchi": "😳 إيتشي",
-}
-
-STATUS_AR = {
-    "Finished Airing": ("✅", "مكتمل"),
-    "Currently Airing": ("🔴", "يعرض الآن"),
-    "Not yet aired": ("⏳", "لم يعرض بعد"),
-}
-
-
-# ═══════════════════════════════════════════════════════════════
-# 🎨 HELPER FUNCTIONS
-# ═══════════════════════════════════════════════════════════════
-
-def get_embed_color(anime: dict) -> int:
-    genres = anime.get("genres", []) + anime.get("themes", [])
-    for g in genres:
-        name = g.get("name", "")
-        if name in Theme.GENRE_COLORS:
-            return Theme.GENRE_COLORS[name]
-    return Theme.GENRE_COLORS["default"]
-
-
-def get_image(anime: dict, img_type: str = "thumbnail") -> Optional[str]:
-    images = anime.get("images", {})
-    jpg = images.get("jpg", {})
-    if img_type == "banner":
-        return jpg.get("large_image_url") or jpg.get("image_url")
-    return jpg.get("image_url")
-
-
-def get_char_image(char: dict) -> Optional[str]:
-    if isinstance(char, dict):
-        images = char.get("images", {})
-        return images.get("jpg", {}).get("image_url")
+def get_image(data: dict, type: str = "default") -> Optional[str]:
+    if not data: return None
+    images = data.get("images", {})
+    if type == "thumbnail":
+        return images.get("jpg", {}).get("image_url") or images.get("webp", {}).get("image_url")
+    elif type == "banner":
+        return data.get("trailer", {}).get("images", {}).get("maximum_image_url")
     return None
 
+def get_char_image(char_data: dict) -> Optional[str]:
+    if not char_data: return None
+    images = char_data.get("images", {})
+    return images.get("jpg", {}).get("image_url") or images.get("webp", {}).get("image_url")
 
-def genres_text(anime: dict, max_items: int = 4) -> str:
-    genres = anime.get("genres", []) + anime.get("themes", [])
-    names = [GENRE_AR.get(g.get("name", ""), g.get("name", "")) for g in genres[:max_items]]
-    return " · ".join(names) if names else "—"
+def synopsis_short(anime: dict) -> str:
+    synopsis = anime.get("synopsis", "لا يوجد وصف.")
+    if len(synopsis) > 300:
+        return synopsis[:300] + "..."
+    return synopsis
 
-
-def status_label(status: str) -> str:
-    _, txt = STATUS_AR.get(status, ("❓", status))
-    return txt
-
-
-def synopsis_short(anime: dict, limit: int = 300) -> str:
-    text = anime.get("synopsis") or "لا يوجد وصف متاح."
-    if len(text) > limit:
-        return text[:limit].rsplit(" ", 1)[0] + "..."
-    return text
-
+def rating_stars(score: float) -> str:
+    if not score: return ""
+    full_stars = int(score // 2)
+    half_star = "⭐" if score % 2 >= 1 else ""
+    return "⭐" * full_stars + half_star
 
 def year_label(anime: dict) -> str:
-    year = anime.get("year")
-    if not year:
-        aired = anime.get("aired", {})
-        if isinstance(aired, dict):
-            year = aired.get("prop", {}).get("year")
-    return str(year) if year else "—"
+    if aired := anime.get("aired", {}).get("prop", {}).get("from", {}).get("year"):
+        return str(aired)
+    return "—"
 
+def genres_text(anime: dict, limit: int = 3) -> str:
+    genres = [g["name"] for g in anime.get("genres", [])][:limit]
+    if not genres: return "لا يوجد."
+    return ", ".join(genres)
 
-def medal_emoji(rank: int) -> str:
-    return {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, "⭐")
-
-
-def rating_stars(score: Optional[float]) -> str:
-    if score is None:
-        return "☆☆☆☆☆"
-    full = int(score // 2)
-    half = 1 if (score % 2) >= 1 else 0
-    return "⭐" * full + ("✴️" if half else "") + "☆" * (5 - full - half)
-
+def status_label(status: str) -> str:
+    if status == "Finished Airing": return "✅ مكتمل"
+    if status == "Currently Airing": return "🔄 يعرض حالياً"
+    if status == "Not yet aired": return "⏳ لم يعرض بعد"
+    return status
 
 def format_number(num: int) -> str:
     return f"{num:,}"
 
-
 def get_category_emoji(category: str) -> str:
-    return {"anime": "🎬", "manga": "📚", "manhwa": "🇰🇷"}.get(category, "📰")
-
-
-def get_category_name(category: str) -> str:
-    return {"anime": "أنمي", "manga": "مانجا", "manhwa": "مانهوا"}.get(category, "أخبار")
-
+    if category == "anime": return "🎬"
+    if category == "manga": return "📚"
+    if category == "manhwa": return "📜"
+    return ""
 
 def get_category_color(category: str) -> int:
-    return {"anime": Theme.ACCENT, "manga": Theme.MANGA, "manhwa": Theme.MANHWA}.get(category, Theme.INFO)
+    if category == "anime": return Theme.ACCENT
+    if category == "manga": return Theme.PURPLE
+    if category == "manhwa": return Theme.INFO
+    return Theme.BG
 
+def get_category_name(category: str) -> str:
+    if category == "anime": return "الأنمي"
+    if category == "manga": return "المانجا"
+    if category == "manhwa": return "المانهوا"
+    return ""
 
 def format_timestamp(seconds: float) -> str:
     hours = int(seconds // 3600)
@@ -558,7 +505,6 @@ def build_main_embed(anime: dict, prefix: str = "") -> discord.Embed:
     embed.set_footer(text=f"🌸 Uniq  |  MAL ID: {mal_id}")
     return embed
 
-
 def build_search_embed(query: str, results: List[dict]) -> discord.Embed:
     embed = discord.Embed(
         title=f"🔍 نتائج البحث: {query}",
@@ -577,7 +523,6 @@ def build_search_embed(query: str, results: List[dict]) -> discord.Embed:
     embed.set_footer(text="🌸 Uniq • اختر أنمي")
     return embed
 
-
 def build_top_embed(anime_list: List[dict]) -> discord.Embed:
     embed = discord.Embed(
         title="🏆 Top 10 Anime",
@@ -595,7 +540,6 @@ def build_top_embed(anime_list: List[dict]) -> discord.Embed:
 
     embed.set_footer(text="🌸 Uniq • اختر أنمي للتفاصيل")
     return embed
-
 
 def build_character_search_embed(query: str, characters: List[dict]) -> discord.Embed:
     """إنشاء امبد لنتائج البحث عن الشخصيات"""
@@ -629,7 +573,6 @@ def build_character_search_embed(query: str, characters: List[dict]) -> discord.
 
     embed.set_footer(text="🌸 Uniq • اختر شخصية")
     return embed
-
 
 def build_character_embed(anime: dict, character: dict) -> discord.Embed:
     if "character" in character:
@@ -665,7 +608,6 @@ def build_character_embed(anime: dict, character: dict) -> discord.Embed:
 
     embed.set_footer(text=f"🌸 Uniq • شخصية من {anime.get('title', '')}")
     return embed
-
 
 def build_character_detail_embed(char: dict, anime_list: List[dict] = None) -> discord.Embed:
     """إنشاء امبد تفصيلي للشخصية مع الأنمي اللي ظهرت فيه"""
@@ -714,7 +656,6 @@ def build_character_detail_embed(char: dict, anime_list: List[dict] = None) -> d
     embed.set_footer(text=f"🌸 Uniq • {char_name}")
     return embed
 
-
 def build_news_embed(anime: dict, category: str = "anime") -> discord.Embed:
     emoji = get_category_emoji(category)
     color = get_category_color(category)
@@ -745,7 +686,6 @@ def build_news_embed(anime: dict, category: str = "anime") -> discord.Embed:
     embed.set_footer(text=f"🌸 Uniq • {cat_name}")
     return embed
 
-
 def build_notification_embed(channel_config: ChannelConfig) -> discord.Embed:
     cat_name = get_category_name(channel_config.category)
     emoji = get_category_emoji(channel_config.category)
@@ -760,7 +700,6 @@ def build_notification_embed(channel_config: ChannelConfig) -> discord.Embed:
 
     embed.set_footer(text=f"🌸 Uniq • إشعارات {cat_name}")
     return embed
-
 
 def build_recognition_result_embed(
     anime_title: str,
@@ -831,18 +770,14 @@ def build_recognition_result_embed(
     embed.set_footer(text="🌸 Uniq • التعرف التلقائي")
     return embed
 
-
 def loading_embed(msg: str = "⏳ جاري التحميل...") -> discord.Embed:
     return discord.Embed(description=f"🌸 {msg}", color=Theme.BG)
-
 
 def error_embed(msg: str) -> discord.Embed:
     return discord.Embed(title="❌ خطأ", description=msg, color=Theme.DANGER).set_footer(text="🌸 Uniq")
 
-
 def success_embed(title: str, msg: str) -> discord.Embed:
     return discord.Embed(title=f"✅ {title}", description=msg, color=Theme.SUCCESS).set_footer(text="🌸 Uniq")
-
 
 def info_embed(title: str, msg: str, color: int = Theme.INFO) -> discord.Embed:
     return discord.Embed(title=f"ℹ️ {title}", description=msg, color=color).set_footer(text="🌸 Uniq")
@@ -1238,7 +1173,6 @@ async def process_auto_recognition(message: discord.Message, image_attachment: d
             ext_urls = data.get("ext_urls", [])
 
             character_name = data.get("creator") or data.get("character") or "غير معروف"
-            source_url = ext_urls[0] if ext_urls else "#"
             similarity = float(header.get("similarity", 0))
 
             if similarity > 70: # نسبة تشابه عالية تعتبر كافية للتعرف على الشخصية
