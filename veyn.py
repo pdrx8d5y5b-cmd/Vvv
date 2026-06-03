@@ -1,5 +1,5 @@
-# 🔥 Uniq — بوت الأنمي v1.0 Pro Edition
-# التعرف التلقائي على الصور + نظام النشر التلقائي
+# 🔥 Uniq — بوت الأنمي v2.1 Fixed Edition
+# نظام التعرف على الصور + نظام الأخبار المقسم
 # مُصلّح ومُحسّن بالكامل
 
 import discord
@@ -9,13 +9,12 @@ import aiohttp
 import asyncio
 import os
 import json
-import base64
-import io
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from dotenv import load_dotenv
 from typing import Optional, List, Dict
 from dataclasses import dataclass, asdict
+import io
 
 # إعداد الـ logging
 logging.basicConfig(
@@ -24,17 +23,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger('Uniq')
 
+load_dotenv()
 TOKEN = os.getenv("TOKEN")
-SAUCENAO_API_KEY = "c7626f0f3cb1519513dea1ca5d2a2f307d2a5327"
+
+# ═══════════════════════════════════════════════════════════════
+# ⚠️ API KEYS - ضروري إدخالهم
+# ═══════════════════════════════════════════════════════════════
+
+# SauceNAO API Key - احصل عليه من https://saucenao.com/
+SAUCENAO_API_KEY = os.getenv("SAUCENAO_API_KEY", "c7626f0f3cb1519513dea1ca5d2a2f307d2a5327")
 
 # ═══════════════════════════════════════════════════════════════
 # 📁 FILE PATHS
 # ═══════════════════════════════════════════════════════════════
 
 DATA_DIR = "/home/ubuntu/data"
-CHANNELS_FILE = f"{DATA_DIR}/channels.json"
+CHANNELS_FILE = f"{DATA_DIR}/news_channels.json"
 CACHE_FILE = f"{DATA_DIR}/cache.json"
 RECOGNITION_CHANNEL_FILE = f"{DATA_DIR}/recognition_channel.json"
+RECOGNITION_LOG_FILE = f"{DATA_DIR}/recognition_log.json"
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -43,20 +50,23 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # ═══════════════════════════════════════════════════════════════
 
 @dataclass
-class ChannelConfig:
+class NewsChannelConfig:
     channel_id: int
     category: str
     enabled: bool = True
     last_news_id: str = ""
-    notification_role_id: Optional[int] = None
-    notification_msg_id: Optional[int] = None
+    last_check_time: float = 0.0
 
-class Database:
+class NewsDatabase:
     def __init__(self):
-        self.channels: Dict[int, ChannelConfig] = {}
-        self.notification_users: Dict[int, List[int]] = {}
+        self.channels: Dict[str, Dict[int, NewsChannelConfig]] = {
+            "anime": {}, "manga": {}, "manhwa": {}
+        }
+        self.notification_users: Dict[str, Dict[int, List[int]]] = {
+            "anime": {}, "manga": {}, "manhwa": {}
+        }
         self.recognition_channel_id: Optional[int] = None
-        self.last_anime_news_id: str = ""
+        self.last_ids: Dict[str, str] = {"anime": "", "manga": "", "manhwa": ""}
         self.load()
 
     def load(self):
@@ -64,19 +74,18 @@ class Database:
             if os.path.exists(CHANNELS_FILE):
                 with open(CHANNELS_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    for k, v in data.get('channels', {}).items():
-                        self.channels[int(k)] = ChannelConfig(**v)
-                    self.notification_users = data.get('notifications', {})
-
-            if os.path.exists(CACHE_FILE):
-                with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                    cache = json.load(f)
-                    self.last_anime_news_id = cache.get('last_anime_news_id', '')
+                    for cat in ["anime", "manga", "manhwa"]:
+                        if cat in data:
+                            for k, v in data[cat].items():
+                                self.channels[cat][int(k)] = NewsChannelConfig(**v)
+                        if f"notifications_{cat}" in data:
+                            self.notification_users[cat] = data[f"notifications_{cat}"]
+                        if f"last_id_{cat}" in data:
+                            self.last_ids[cat] = data[f"last_id_{cat}"]
 
             if os.path.exists(RECOGNITION_CHANNEL_FILE):
                 with open(RECOGNITION_CHANNEL_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.recognition_channel_id = data.get('channel_id')
+                    self.recognition_channel_id = json.load(f).get("channel_id")
 
             logger.info("✅ تم تحميل البيانات بنجاح")
         except Exception as e:
@@ -84,20 +93,17 @@ class Database:
 
     def save(self):
         try:
-            data = {
-                'channels': {str(k): asdict(v) for k, v in self.channels.items()},
-                'notifications': self.notification_users
-            }
+            data = {}
+            for cat in ["anime", "manga", "manhwa"]:
+                data[cat] = {str(k): asdict(v) for k, v in self.channels[cat].items()}
+                data[f"notifications_{cat}"] = self.notification_users[cat]
+                data[f"last_id_{cat}"] = self.last_ids[cat]
+
             with open(CHANNELS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
-            cache = {'last_anime_news_id': self.last_anime_news_id}
-            with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(cache, f, ensure_ascii=False, indent=2)
-
-            recognition_data = {'channel_id': self.recognition_channel_id}
             with open(RECOGNITION_CHANNEL_FILE, 'w', encoding='utf-8') as f:
-                json.dump(recognition_data, f, ensure_ascii=False, indent=2)
+                json.dump({"channel_id": self.recognition_channel_id}, f)
 
         except Exception as e:
             logger.error(f"❌ خطأ في حفظ البيانات: {e}")
@@ -105,49 +111,41 @@ class Database:
     def set_recognition_channel(self, channel_id: int):
         self.recognition_channel_id = channel_id
         self.save()
+        logger.info(f"✅ تم تعيين روم التعرف: {channel_id}")
 
     def clear_recognition_channel(self):
         self.recognition_channel_id = None
         self.save()
+        logger.info("❌ تم إلغاء روم التعرف")
 
-    def add_channel(self, channel_id: int, category: str, role_id: int = None):
-        self.channels[channel_id] = ChannelConfig(
-            channel_id=channel_id,
-            category=category,
-            notification_role_id=role_id
+    def add_news_channel(self, channel_id: int, category: str):
+        self.channels[category][channel_id] = NewsChannelConfig(
+            channel_id=channel_id, category=category
         )
-        self.notification_users[channel_id] = []
+        self.notification_users[category][channel_id] = []
         self.save()
 
-    def remove_channel(self, channel_id: int):
-        if channel_id in self.channels:
-            del self.channels[channel_id]
-        if channel_id in self.notification_users:
-            del self.notification_users[channel_id]
+    def remove_news_channel(self, channel_id: int, category: str):
+        if channel_id in self.channels[category]:
+            del self.channels[category][channel_id]
+        if channel_id in self.notification_users[category]:
+            del self.notification_users[category][channel_id]
         self.save()
 
-    def get_channels(self, category: str = None) -> List[ChannelConfig]:
-        if category:
-            return [c for c in self.channels.values() if c.category == category and c.enabled]
-        return [c for c in self.channels.values() if c.enabled]
+    def get_news_channels(self, category: str) -> List[NewsChannelConfig]:
+        return [c for c in self.channels[category].values() if c.enabled]
 
-    def add_notification_user(self, channel_id: int, user_id: int):
-        if channel_id not in self.notification_users:
-            self.notification_users[channel_id] = []
-        if user_id not in self.notification_users[channel_id]:
-            self.notification_users[channel_id].append(user_id)
-            self.save()
+    def is_channel_configured(self, channel_id: int, category: str) -> bool:
+        return channel_id in self.channels[category]
 
-    def remove_notification_user(self, channel_id: int, user_id: int):
-        if channel_id in self.notification_users:
-            if user_id in self.notification_users[channel_id]:
-                self.notification_users[channel_id].remove(user_id)
-                self.save()
+    def set_last_news_id(self, category: str, news_id: str):
+        self.last_ids[category] = news_id
+        self.save()
 
-    def is_user_subscribed(self, channel_id: int, user_id: int) -> bool:
-        return user_id in self.notification_users.get(channel_id, [])
+    def get_last_news_id(self, category: str) -> str:
+        return self.last_ids.get(category, "")
 
-db = Database()
+db = NewsDatabase()
 
 # ═══════════════════════════════════════════════════════════════
 # 🌐 API FUNCTIONS
@@ -155,7 +153,7 @@ db = Database()
 
 JIKAN_BASE = "https://api.jikan.moe/v4"
 TRACE_MOE_URL = "https://api.trace.moe/search"
-SAUCENAO_URL = "https://saucenao.com/search.php"
+SAUCENAO_URL = "https://saucenao.com/api.php"
 
 _rate_limiter = asyncio.Semaphore(1)
 _jikan_cache = {}
@@ -180,17 +178,10 @@ async def jikan_get(endpoint: str, use_cache: bool = True) -> Optional[dict]:
             logger.error(f"❌ خطأ في Jikan API: {e}")
     return None
 
+# === Anime APIs ===
 async def search_anime(query: str, limit: int = 15) -> List[dict]:
     data = await jikan_get(f"/anime?q={query.replace(' ', '%20')}&limit={limit}&sfw=true")
     return data.get("data", []) if data else []
-
-async def search_character(query: str, limit: int = 15) -> List[dict]:
-    data = await jikan_get(f"/characters?q={query.replace(' ', '%20')}&limit={limit}&order_by=favorites&sort=desc")
-    return data.get("data", []) if data else []
-
-async def get_character_details(mal_id: int) -> Optional[dict]:
-    data = await jikan_get(f"/characters/{mal_id}/full")
-    return data.get("data") if data else None
 
 async def get_anime_details(mal_id: int) -> Optional[dict]:
     data = await jikan_get(f"/anime/{mal_id}/full")
@@ -216,38 +207,133 @@ async def get_airing_anime(limit: int = 15) -> List[dict]:
     data = await jikan_get(f"/top/anime?filter=airing&limit={limit}")
     return data.get("data", []) if data else []
 
+# === Manga APIs ===
+async def search_manga(query: str, limit: int = 15) -> List[dict]:
+    data = await jikan_get(f"/manga?q={query.replace(' ', '%20')}&limit={limit}&sfw=true")
+    return data.get("data", []) if data else []
+
+async def get_manga_details(mal_id: int) -> Optional[dict]:
+    data = await jikan_get(f"/manga/{mal_id}/full")
+    return data.get("data") if data else None
+
+async def get_top_manga(limit: int = 10) -> List[dict]:
+    data = await jikan_get(f"/top/manga?limit={limit}")
+    return data.get("data", []) if data else []
+
+async def get_publishing_manga(limit: int = 10) -> List[dict]:
+    data = await jikan_get(f"/top/manga?filter=airing&limit={limit}")
+    return data.get("data", []) if data else []
+
+# === Character APIs ===
+async def search_character(query: str, limit: int = 15) -> List[dict]:
+    data = await jikan_get(f"/characters?q={query.replace(' ', '%20')}&limit={limit}&order_by=favorites&sort=desc")
+    return data.get("data", []) if data else []
+
+async def get_character_details(mal_id: int) -> Optional[dict]:
+    data = await jikan_get(f"/characters/{mal_id}/full")
+    return data.get("data") if data else None
+
 async def get_characters(mal_id: int) -> List[dict]:
     data = await jikan_get(f"/anime/{mal_id}/characters")
     return data.get("data", []) if data else []
 
-async def get_anime_recommendations(mal_id: int, limit: int = 6) -> List[dict]:
-    data = await jikan_get(f"/anime/{mal_id}/recommendations")
-    return data.get("data", [])[:limit] if data else []
+# ═══════════════════════════════════════════════════════════════
+# 🖼️ IMAGE RECOGNITION APIs (مُصلّح)
+# ═══════════════════════════════════════════════════════════════
 
 async def saucenao_search(image_data: bytes) -> Optional[dict]:
+    """
+    البحث في SauceNAO باستخدام API Key
+    """
+    if not SAUCENAO_API_KEY or SAUCENAO_API_KEY == "YOUR_SAUCENAO_API_KEY":
+        logger.warning("⚠️ SauceNAO API Key غير موجود!")
+        return None
+
     try:
         async with aiohttp.ClientSession() as session:
+            # إرسال طلب POST مع الملف و الـ API Key
             form = aiohttp.FormData()
-            form.add_field('output_type', '2')
+            form.add_field('output_type', '2')  # JSON output
             form.add_field('api_key', SAUCENAO_API_KEY)
-            form.add_field('file', image_data, filename='image.jpg', content_type='image/jpeg')
-            async with session.post(SAUCENAO_URL, data=form, timeout=30) as response:
+            form.add_field('file', ('image.jpg', image_data, 'image/jpeg'))
+
+            logger.info(f"🔍 جاري البحث في SauceNAO...")
+            async with session.post(
+                SAUCENAO_URL,
+                data=form,
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                logger.info(f"📡 SauceNAO Response Status: {response.status}")
+
                 if response.status == 200:
-                    return await response.json()
+                    result = await response.json()
+                    logger.info(f"✅ SauceNAO Result: {result.get('header', {}).get('results_returned', 0)} results")
+                    return result
+                elif response.status == 403:
+                    logger.error("❌ SauceNAO: API Key غير صحيح أو انتهت صلاحيته")
+                elif response.status == 429:
+                    logger.error("❌ SauceNAO: تم تجاوز الحد المسموح")
+                else:
+                    text = await response.text()
+                    logger.error(f"❌ SauceNAO Error: {response.status} - {text[:200]}")
+
+    except asyncio.TimeoutError:
+        logger.error("❌ SauceNAO: انتهت مهلة الطلب")
+    except aiohttp.ClientError as e:
+        logger.error(f"❌ SauceNAO Client Error: {e}")
     except Exception as e:
         logger.error(f"❌ خطأ في SauceNAO: {e}")
+
     return None
 
+
 async def trace_moe_search(image_data: bytes) -> Optional[dict]:
+    """
+    البحث في Trace.moe (مجاني - لا يحتاج API Key)
+    """
     try:
         async with aiohttp.ClientSession() as session:
             form = aiohttp.FormData()
-            form.add_field('image', image_data, filename='image.jpg', content_type='image/jpeg')
-            async with session.post(TRACE_MOE_URL, data=form, timeout=30) as response:
+            form.add_field('image', ('image.jpg', image_data, 'image/jpeg'))
+
+            logger.info(f"🔍 جاري البحث في Trace.moe...")
+            async with session.post(
+                TRACE_MOE_URL,
+                data=form,
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                logger.info(f"📡 Trace.moe Response Status: {response.status}")
+
                 if response.status == 200:
-                    return await response.json()
+                    result = await response.json()
+                    if result.get("result"):
+                        logger.info(f"✅ Trace.moe: تم العثور على {len(result['result'])} نتيجة")
+                    return result
+                else:
+                    text = await response.text()
+                    logger.error(f"❌ Trace.moe Error: {response.status} - {text[:200]}")
+
+    except asyncio.TimeoutError:
+        logger.error("❌ Trace.moe: انتهت مهلة الطلب")
+    except aiohttp.ClientError as e:
+        logger.error(f"❌ Trace.moe Client Error: {e}")
     except Exception as e:
         logger.error(f"❌ خطأ في Trace.moe: {e}")
+
+    return None
+
+
+async def process_image_with_url(image_url: str) -> Optional[bytes]:
+    """
+    تحميل الصورة من رابط
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                if r.status == 200:
+                    return await r.read()
+    except Exception as e:
+        logger.error(f"❌ خطأ في تحميل الصورة: {e}")
     return None
 
 # ═══════════════════════════════════════════════════════════════
@@ -274,29 +360,42 @@ def get_image(data: dict, type: str = "default") -> Optional[str]:
         return images.get("jpg", {}).get("image_url") or images.get("webp", {}).get("image_url")
     elif type == "banner":
         return data.get("trailer", {}).get("images", {}).get("maximum_image_url")
-    return None
+    return images.get("jpg", {}).get("image_url")
 
 def get_char_image(char_data: dict) -> Optional[str]:
     if not char_data: return None
     images = char_data.get("images", {})
     return images.get("jpg", {}).get("image_url") or images.get("webp", {}).get("image_url")
 
-def synopsis_short(anime: dict) -> str:
-    syn = anime.get("synopsis", "لا يوجد وصف.")
-    return (syn[:300] + "...") if syn and len(syn) > 300 else (syn or "لا يوجد وصف.")
+def synopsis_full(data: dict, max_len: int = 400) -> str:
+    syn = data.get("synopsis") or data.get("background") or "لا يوجد وصف."
+    syn = syn.replace("[Written by MAL Rewrite]", "").strip()
+    return (syn[:max_len] + "...") if len(syn) > max_len else syn
 
 def rating_stars(score: float) -> str:
     return "⭐" * int(score // 2) if score else ""
 
-def year_label(anime: dict) -> str:
-    return str(anime.get("aired", {}).get("prop", {}).get("from", {}).get("year", "—"))
+def year_label(data: dict) -> str:
+    aired = data.get("aired", {}).get("prop", {}).get("from", {})
+    if year := aired.get("year"): return str(year)
+    published = data.get("published", {}).get("prop", {}).get("from", {})
+    if year := published.get("year"): return str(year)
+    return "—"
 
-def genres_text(anime: dict, limit: int = 3) -> str:
-    genres = [g["name"] for g in anime.get("genres", [])][:limit]
-    return ", ".join(genres) if genres else "لا يوجد."
+def genres_text(data: dict, limit: int = 4) -> str:
+    genres = [g["name"] for g in data.get("genres", [])][:limit]
+    return ", ".join(genres) if genres else "—"
+
+def genres_list(data: dict) -> List[str]:
+    return [g["name"] for g in data.get("genres", [])]
 
 def status_label(status: str) -> str:
-    return {"Finished Airing": "✅ مكتمل", "Currently Airing": "🔄 يعرض حالياً", "Not yet aired": "⏳ لم يعرض بعد"}.get(status, status)
+    labels = {
+        "Finished Airing": "✅ مكتمل", "Currently Airing": "🔄 يعرض حالياً",
+        "Not yet aired": "⏳ لم يعرض بعد", "Publishing": "📖 يُنشر حالياً",
+        "Finished": "✅ مكتمل", "On Hiatus": "⏸️ متوقف مؤقتاً"
+    }
+    return labels.get(status, status)
 
 def format_number(num: int) -> str:
     return f"{num:,}"
@@ -315,60 +414,153 @@ def format_timestamp(seconds: float) -> str:
     s = int(seconds % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
+def get_trailer_url(data: dict) -> Optional[str]:
+    trailer = data.get("trailer", {})
+    return trailer.get("url") or trailer.get("embed_url")
+
+def get_url(data: dict) -> str:
+    return data.get("url", "")
+
+def get_watch_url(data: dict) -> Optional[str]:
+    title = data.get("title", "").replace(" ", "+")
+    return f"https://www.crunchyroll.com/search?q={title}"
+
+def get_read_url(data: dict) -> Optional[str]:
+    title = data.get("title", "").replace(" ", "+")
+    return f"https://mangadex.org/search?q={title}"
+
+def get_item_type(data: dict, category: str) -> str:
+    if category == "anime": return data.get("type", "TV")
+    return data.get("type", "Manga")
+
+def get_total_chapters(data: dict) -> str:
+    chapters = data.get("chapters")
+    if chapters: return str(chapters)
+    volumes = data.get("volumes")
+    if volumes: return f"{volumes} مجلد"
+    return "—"
+
+def get_studios(data: dict) -> str:
+    studios = [s["name"] for s in data.get("studios", [])][:1]
+    return studios[0] if studios else "—"
+
+def get_authors(data: dict) -> str:
+    authors = [a["name"] for a in data.get("authors", [])][:2]
+    return ", ".join(authors) if authors else "—"
+
+def get_studios_or_authors(data: dict, category: str) -> str:
+    return get_studios(data) if category == "anime" else get_authors(data)
+
 # ═══════════════════════════════════════════════════════════════
 # 📦 EMBED BUILDERS
 # ═══════════════════════════════════════════════════════════════
 
-def build_main_embed(anime: dict, prefix: str = "") -> discord.Embed:
-    title = anime.get("title", "؟")
-    title_jp = anime.get("title_japanese", "")
-    mal_id = anime.get("mal_id", 0)
-    desc = f"🇯🇵 *{title_jp}*\n\n{synopsis_short(anime)}" if title_jp else synopsis_short(anime)
-    embed = discord.Embed(title=f"{prefix}{title}", description=desc, color=Theme.CARD_BG, url=anime.get("url"), timestamp=discord.utils.utcnow())
-    if score := anime.get("score"): embed.add_field(name="⭐ التقييم", value=f"**{score}/10** {rating_stars(score)}", inline=True)
-    if eps := anime.get("episodes"): embed.add_field(name="📺 الحلقات", value=f"**{eps}**", inline=True)
-    embed.add_field(name="📅 السنة", value=f"**{year_label(anime)}**", inline=True)
-    embed.add_field(name="🎭 التصنيفات", value=genres_text(anime, 5), inline=False)
-    if status := anime.get("status"): embed.add_field(name="🏷️ الحالة", value=status_label(status), inline=True)
-    if thumb := get_image(anime, "thumbnail"): embed.set_thumbnail(url=thumb)
-    embed.set_footer(text=f"🌸 Uniq  |  MAL ID: {mal_id}")
+def build_main_embed(item: dict, prefix: str = "", category: str = "anime") -> discord.Embed:
+    title = item.get("title", "؟")
+    title_jp = item.get("title_japanese", "")
+    mal_id = item.get("mal_id", 0)
+    source = get_studios_or_authors(item, category)
+    desc = f"🇯🇵 *{title_jp}*\n\n{synopsis_full(item, 350)}" if title_jp else synopsis_full(item, 350)
+    color = get_category_color(category)
+    embed = discord.Embed(title=f"{prefix}{title}", description=desc, color=color, url=item.get("url"), timestamp=discord.utils.utcnow())
+
+    if score := item.get("score"):
+        embed.add_field(name="⭐ التقييم", value=f"**{score}/10** {rating_stars(score)}", inline=True)
+    if category == "anime":
+        if eps := item.get("episodes"):
+            embed.add_field(name="📺 الحلقات", value=f"**{eps}**", inline=True)
+    else:
+        if chapters := get_total_chapters(item):
+            embed.add_field(name="📖 الفصول", value=f"**{chapters}**", inline=True)
+
+    embed.add_field(name="📅 السنة", value=f"**{year_label(item)}**", inline=True)
+    embed.add_field(name=f"🏷️ {get_item_type(item, category)}", value=source, inline=True)
+    embed.add_field(name="🎭 التصنيفات", value=genres_text(item, 4), inline=False)
+    if status := item.get("status"):
+        embed.add_field(name="🏷️ الحالة", value=status_label(status), inline=True)
+    if thumb := get_image(item, "thumbnail"):
+        embed.set_thumbnail(url=thumb)
+    embed.set_footer(text=f"🌸 Uniq • {get_category_name(category)} | MAL ID: {mal_id}")
     return embed
 
-def build_search_embed(query: str, results: List[dict]) -> discord.Embed:
-    embed = discord.Embed(title=f"🔍 نتائج البحث: {query}", description=f"تم العثور على **{len(results)}** نتيجة\nاختر أنمي من القائمة 👇", color=Theme.BG)
-    for i, a in enumerate(results[:5]):
-        score = f"⭐ **{a.get('score', '؟')}**" if a.get("score") else "✨ جديد"
-        embed.add_field(name=f"{medal_emoji(i+1)} {i+1}. {a.get('title', '؟')}", value=f"{score} | 📺 {a.get('episodes', '؟')} حلقة", inline=False)
-    if results and (thumb := get_image(results[0], "thumbnail")): embed.set_thumbnail(url=thumb)
+def build_search_embed(query: str, results: List[dict], category: str = "anime") -> discord.Embed:
+    item_type = "أنمي" if category == "anime" else "مادة"
+    embed = discord.Embed(title=f"🔍 نتائج البحث: {query}", description=f"تم العثور على **{len(results)}** {item_type}\nاختر من القائمة 👇", color=get_category_color(category))
+
+    for i, item in enumerate(results[:5]):
+        score = f"⭐ **{item.get('score', '؟')}**" if item.get("score") else "✨ جديد"
+        detail = f"📺 {item.get('episodes', '؟')} حلقة" if category == "anime" else f"📖 {get_total_chapters(item)} فصل"
+        embed.add_field(name=f"{medal_emoji(i+1)} {i+1}. {item.get('title', '؟')}", value=f"{score} | {detail}", inline=False)
+
+    if results and (thumb := get_image(results[0], "thumbnail")):
+        embed.set_thumbnail(url=thumb)
     return embed
 
-def build_top_embed(anime_list: List[dict]) -> discord.Embed:
-    embed = discord.Embed(title="🏆 Top 10 Anime", description="أفضل الأنميات على MyAnimeList", color=Theme.BG)
-    for i, a in enumerate(anime_list[:10]):
-        embed.add_field(name=f"{medal_emoji(i+1)} #{i+1} {a.get('title', '؟')}", value=f"⭐ {a.get('score', '؟')}", inline=False)
-    if anime_list and (img := get_image(anime_list[0], "banner")): embed.set_image(url=img)
+def build_top_embed(items: List[dict], category: str = "anime") -> discord.Embed:
+    name = get_category_name(category)
+    embed = discord.Embed(title=f"🏆 Top 10 {name}", description=f"أفضل {name} على MyAnimeList", color=get_category_color(category))
+    for i, item in enumerate(items[:10]):
+        embed.add_field(name=f"{medal_emoji(i+1)} #{i+1} {item.get('title', '؟')}", value=f"⭐ {item.get('score', '؟')}", inline=False)
+    if items and (img := get_image(items[0], "banner")):
+        embed.set_image(url=img)
     return embed
 
 def build_character_search_embed(query: str, characters: List[dict]) -> discord.Embed:
     embed = discord.Embed(title=f"🎭 نتائج البحث عن: {query}", description=f"تم العثور على **{len(characters)}** شخصية\nاختر شخصية من القائمة 👇", color=Theme.PURPLE)
     for i, char in enumerate(characters[:10]):
         embed.add_field(name=f"{medal_emoji(i+1) if i < 3 else '👤'} {char.get('name', '؟')}", value=f"💖 **{format_number(char.get('favorites', 0))}**", inline=False)
-    if characters and (thumb := get_char_image(characters[0])): embed.set_thumbnail(url=thumb)
+    if characters and (thumb := get_char_image(characters[0])):
+        embed.set_thumbnail(url=thumb)
     return embed
 
 def build_character_detail_embed(char: dict, anime_list: List[dict] = None) -> discord.Embed:
     embed = discord.Embed(title=f"🎭 {char.get('name', '؟')}", color=Theme.PURPLE, url=char.get("url"), timestamp=discord.utils.utcnow())
-    if favs := char.get("favorites"): embed.add_field(name="⭐ الإعجابات", value=f"**{format_number(favs)}**", inline=True)
+    if favs := char.get("favorites"):
+        embed.add_field(name="⭐ الإعجابات", value=f"**{format_number(favs)}**", inline=True)
     if anime_list:
         titles = [f"📺 **{a.get('anime', {}).get('title', '؟')}** ({a.get('role', '')})" for a in anime_list[:5]]
         embed.add_field(name="🎬 الأنمي اللي ظهرت فيه", value="\n".join(titles), inline=False)
-    if about := char.get("about"): embed.add_field(name="📝 نبذة", value=about[:500] + "...", inline=False)
-    if img := get_char_image(char): embed.set_thumbnail(url=img)
+    if about := char.get("about"):
+        embed.add_field(name="📝 نبذة", value=about[:500] + "...", inline=False)
+    if img := get_char_image(char):
+        embed.set_thumbnail(url=img)
     return embed
 
-def build_news_embed(anime: dict, category: str = "anime") -> discord.Embed:
-    embed = discord.Embed(title=f"{get_category_emoji(category)} خبر {get_category_name(category)} جديد!", description=f"**{anime.get('title', '؟')}**", color=get_category_color(category), url=anime.get("url"), timestamp=discord.utils.utcnow())
-    if thumb := get_image(anime, "thumbnail"): embed.set_thumbnail(url=thumb)
+def build_news_embed_full(item: dict, category: str = "anime") -> discord.Embed:
+    title = item.get("title", "؟")
+    title_jp = item.get("title_japanese", "")
+    mal_id = item.get("mal_id", 0)
+    source = get_studios_or_authors(item, category)
+    description = synopsis_full(item, 400)
+    extra_info = []
+    if score := item.get("score"):
+        extra_info.append(f"⭐ التقييم: **{score}/10**")
+    if category == "anime":
+        if eps := item.get("episodes"):
+            extra_info.append(f"📺 الحلقات: **{eps}**")
+    else:
+        if chapters := get_total_chapters(item):
+            extra_info.append(f"📖 الفصول: **{chapters}**")
+    if year := year_label(item):
+        if year != "—":
+            extra_info.append(f"📅 السنة: **{year}**")
+    extra_info.append(f"🏷️ النوع: **{get_item_type(item, category)}**")
+    if source:
+        extra_info.append(f"🎨 {source}")
+    if extra_info:
+        description += "\n\n" + "\n".join(extra_info)
+    genres = genres_list(item)
+    if genres:
+        genre_text = " ".join([f"`{g}`" for g in genres[:5]])
+        description += f"\n\n🎭 {genre_text}"
+
+    embed = discord.Embed(title=f"{get_category_emoji(category)} خبر {get_category_name(category)} جديد!", description=description, color=get_category_color(category), url=item.get("url"), timestamp=discord.utils.utcnow())
+    embed.add_field(name="🎬", value=f"**{title}**", inline=False)
+    if status := item.get("status"):
+        embed.add_field(name="🏷️ الحالة", value=status_label(status), inline=True)
+    if thumb := get_image(item, "thumbnail"):
+        embed.set_thumbnail(url=thumb)
+    embed.set_footer(text=f"🌸 Uniq • MAL ID: {mal_id}")
     return embed
 
 def build_recognition_result_embed(anime_title: str, anime_title_jp: str = None, episode: str = None, timestamp_str: str = None, similarity: float = None, image_preview: str = None, mal_url: str = None, full_anime: dict = None) -> discord.Embed:
@@ -385,6 +577,13 @@ def build_recognition_result_embed(anime_title: str, anime_title_jp: str = None,
         embed.add_field(name="🎭 التصنيفات", value=genres_text(full_anime, 3), inline=False)
     if image_preview: embed.set_thumbnail(url=image_preview)
     embed.set_footer(text="🌸 Uniq • التعرف التلقائي")
+    return embed
+
+def build_recognition_embed(title: str, description: str, thumbnail: str = None, color: int = Theme.PURPLE, footer: str = None) -> discord.Embed:
+    embed = discord.Embed(title=title, description=description, color=color, timestamp=discord.utils.utcnow())
+    if thumbnail:
+        embed.set_thumbnail(url=thumbnail)
+    embed.set_footer(text=footer or "🌸 Uniq • التعرف التلقائي")
     return embed
 
 def loading_embed(msg: str = "⏳ جاري التحميل...") -> discord.Embed:
@@ -404,38 +603,61 @@ def info_embed(title: str, msg: str, color: int = Theme.INFO) -> discord.Embed:
 # ═══════════════════════════════════════════════════════════════
 
 class SearchDropdown(discord.ui.View):
-    def __init__(self, results: List[dict], user_id: int):
+    def __init__(self, results: List[dict], user_id: int, category: str = "anime"):
         super().__init__(timeout=300)
-        self.results, self.user_id = results, user_id
-        options = [discord.SelectOption(label=r.get("title", "؟")[:100], value=str(i), emoji=medal_emoji(i+1) if i < 3 else "🎬") for i, r in enumerate(results[:25])]
-        select = discord.ui.Select(placeholder="🔍 اختر أنمي من القائمة...", options=options)
+        self.results, self.user_id, self.category = results, user_id, category
+        options = [discord.SelectOption(label=r.get("title", "؟")[:100], value=str(i), emoji=medal_emoji(i+1) if i < 3 else get_category_emoji(category)) for i, r in enumerate(results[:25])]
+        select = discord.ui.Select(placeholder=f"🔍 اختر {get_category_name(category)}...", options=options)
         select.callback = self.on_select
         self.add_item(select)
 
     async def on_select(self, interaction: discord.Interaction):
         idx = int(interaction.data["values"][0])
-        anime = self.results[idx]
+        item = self.results[idx]
         await interaction.response.defer(ephemeral=True)
-        if mal_id := anime.get("mal_id"):
-            if full := await get_anime_details(mal_id): anime = full
-        await interaction.followup.send(embed=build_main_embed(anime, "🎬 "), view=AnimeActionsView(anime, interaction.user.id), ephemeral=True)
+        mal_id = item.get("mal_id")
+        if mal_id:
+            if self.category == "anime":
+                if full := await get_anime_details(mal_id): item = full
+            else:
+                if full := await get_manga_details(mal_id): item = full
+        await interaction.followup.send(embed=build_main_embed(item, f"{get_category_emoji(self.category)} ", self.category), view=ItemActionsView(item, interaction.user.id, self.category), ephemeral=True)
 
-class AnimeActionsView(discord.ui.View):
-    def __init__(self, anime: dict, user_id: int):
+class ItemActionsView(discord.ui.View):
+    def __init__(self, item: dict, user_id: int, category: str):
         super().__init__(timeout=300)
-        self.anime, self.user_id = anime, user_id
-        if url := anime.get("url"): self.add_item(discord.ui.Button(label="MyAnimeList", emoji="🌐", url=url, style=discord.ButtonStyle.link))
+        self.item, self.user_id, self.category = item, user_id, category
+        if url := item.get("url"):
+            self.add_item(discord.ui.Button(label="MyAnimeList", emoji="🌐", url=url, style=discord.ButtonStyle.link))
+        watch_url = get_watch_url(item) if category == "anime" else get_read_url(item)
+        if watch_url:
+            self.add_item(discord.ui.Button(label="📖 قراءة/مشاهدة", emoji="▶️", url=watch_url, style=discord.ButtonStyle.link))
 
     @discord.ui.button(label="🎭 الشخصيات", style=discord.ButtonStyle.primary)
     async def characters_btn(self, interaction: discord.Interaction, btn: discord.ui.Button):
+        if self.category != "anime":
+            await interaction.response.send_message(embed=error_embed("الشخصيات متاحة للأنمي فقط."), ephemeral=True)
+            return
         await interaction.response.defer(ephemeral=True)
-        if mal_id := self.anime.get("mal_id"):
+        mal_id = self.item.get("mal_id")
+        if mal_id:
             chars = await get_characters(mal_id)
             if chars:
-                view = CharacterListView(self.anime, chars, interaction.user.id)
+                view = CharacterListView(self.item, chars, interaction.user.id)
                 await interaction.followup.send(embed=view.build_page(), view=view, ephemeral=True)
                 return
         await interaction.followup.send(embed=error_embed("لا توجد شخصيات."), ephemeral=True)
+
+    @discord.ui.button(label="📋 التفاصيل", style=discord.ButtonStyle.secondary)
+    async def details_btn(self, interaction: discord.Interaction, btn: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        mal_id = self.item.get("mal_id")
+        if mal_id:
+            full = await get_anime_details(mal_id) if self.category == "anime" else await get_manga_details(mal_id)
+            if full:
+                await interaction.followup.send(embed=build_main_embed(full, "📋 ", self.category), ephemeral=True)
+                return
+        await interaction.followup.send(embed=error_embed("خطأ في جلب التفاصيل."), ephemeral=True)
 
 class CharacterListView(discord.ui.View):
     PER_PAGE = 5
@@ -480,20 +702,21 @@ class CharacterSearchDropdown(discord.ui.View):
             if full := await get_character_details(mal_id): char = full
         await interaction.followup.send(embed=build_character_detail_embed(char, char.get("anime", [])), ephemeral=True)
 
-class NotificationView(discord.ui.View):
-    def __init__(self, channel_id: int, category: str):
+class NewsActionsView(discord.ui.View):
+    def __init__(self, item: dict, channel_id: int, category: str):
         super().__init__(timeout=None)
-        self.channel_id, self.category = channel_id, category
-
-    @discord.ui.button(label="🔔 اشتراك", style=discord.ButtonStyle.success, emoji="🔔")
-    async def subscribe(self, interaction: discord.Interaction, btn: discord.ui.Button):
-        uid = interaction.user.id
-        if db.is_user_subscribed(self.channel_id, uid):
-            db.remove_notification_user(self.channel_id, uid)
-            await interaction.response.send_message(embed=info_embed("إلغاء الاشتراك", "تم إلغاء اشتراكك بنجاح!", Theme.WARNING), ephemeral=True)
-        else:
-            db.add_notification_user(self.channel_id, uid)
-            await interaction.response.send_message(embed=success_embed("اشتراك ناجح!", f"ستصلك إشعارات {get_category_name(self.category)} الجديدة"), ephemeral=True)
+        self.item, self.channel_id, self.category = item, channel_id, category
+        watch_url = get_watch_url(item) if category == "anime" else get_read_url(item)
+        btn_label = "▶️ مشاهدة" if category == "anime" else "📖 قراءة"
+        if watch_url:
+            self.add_item(discord.ui.Button(label=btn_label, emoji="▶️", url=watch_url, style=discord.ButtonStyle.link))
+        mal_url = get_url(item)
+        if mal_url:
+            self.add_item(discord.ui.Button(label="🌐 التفاصيل", emoji="🌐", url=mal_url, style=discord.ButtonStyle.link))
+        if category == "anime":
+            trailer_url = get_trailer_url(item)
+            if trailer_url:
+                self.add_item(discord.ui.Button(label="🎬 الفيديو", emoji="🎬", url=trailer_url, style=discord.ButtonStyle.secondary))
 
 # ═══════════════════════════════════════════════════════════════
 # 🤖 BOT SETUP & EVENTS
@@ -505,9 +728,12 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 
 @bot.event
 async def on_ready():
-    logger.info(f'Logged in as {bot.user.name}')
+    logger.info(f'✅ Logged in as {bot.user.name}')
+    logger.info(f'📋 Recognition Channel: {db.recognition_channel_id}')
     await bot.tree.sync()
-    bot.loop.create_task(news_broadcast_loop())
+    bot.loop.create_task(news_broadcast_loop("anime"))
+    bot.loop.create_task(news_broadcast_loop("manga"))
+    bot.loop.create_task(news_broadcast_loop("manhwa"))
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -520,55 +746,174 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
 async def process_auto_recognition(message: discord.Message, attachment: discord.Attachment):
-    if not db.recognition_channel_id or message.channel.id != db.recognition_channel_id: return
-    try:
-        data = await attachment.read()
-        msg = await message.reply(embed=loading_embed("جاري تحليل الصورة..."))
-        
-        # 1. SauceNAO (Characters)
-        saucenao = await saucenao_search(data)
-        if saucenao and saucenao.get("results"):
-            best = saucenao["results"][0]
-            sim = float(best.get("header", {}).get("similarity", 0))
-            if sim > 70:
-                char_name = best.get("data", {}).get("character") or best.get("data", {}).get("creator") or "غير معروف"
-                source = best.get("data", {}).get("ext_urls", ["#"])[0]
-                embed = discord.Embed(title=f"🎭 تم التعرف على الشخصية: {char_name}", description=f"**التشابه:** {sim:.2f}%\n**المصدر:** [اضغط هنا]({source})", color=Theme.PURPLE)
-                if thumb := best.get("header", {}).get("thumbnail"): embed.set_thumbnail(url=thumb)
-                embed.set_footer(text=f"🌸 Uniq • من: {message.author.name}")
-                return await msg.edit(embed=embed)
-        
-        # 2. Trace.moe (Anime)
-        trace = await trace_moe_search(data)
-        if trace and trace.get("result"):
-            best = trace["result"][0]
-            ani = best.get("anilist", {})
-            full = await get_anime_details(ani.get("mal_id")) if ani.get("mal_id") else None
-            embed = build_recognition_result_embed(ani.get("title", "؟"), ani.get("title_native"), str(best.get("episode", "?")), format_timestamp(best.get("from", 0)), best.get("similarity"), best.get("image"), f"https://myanimelist.net/anime/{ani.get('mal_id')}" if ani.get('mal_id') else None, full)
-            embed.set_footer(text=f"🌸 Uniq • من: {message.author.name}")
-            await msg.edit(embed=embed)
-        else:
-            await msg.edit(embed=error_embed("لم يتم التعرف على الصورة."))
-    except Exception as e:
-        logger.error(f"Error in recognition: {e}")
-        await msg.edit(embed=error_embed("حدث خطأ أثناء التحليل."))
+    """
+    معالجة الصورة المرفقة - التعرف التلقائي
+    """
+    # التحقق من روم التعرف
+    if not db.recognition_channel_id:
+        logger.warning("⚠️ روم التعرف غير مفعّل!")
+        return
 
-async def news_broadcast_loop():
+    if message.channel.id != db.recognition_channel_id:
+        return
+
+    logger.info(f"🖼️ تم اكتشاف صورة في روم التعرف - من: {message.author.name}")
+
+    try:
+        # قراءة الصورة
+        image_data = await attachment.read()
+        image_size = len(image_data) / 1024  # KB
+        logger.info(f"📊 حجم الصورة: {image_size:.2f} KB")
+
+        # رسالة التحميل
+        loading_msg = await message.reply(embed=loading_embed("🔍 جاري تحليل الصورة..."))
+
+        # =========================================
+        # البحث في SauceNAO أولاً (الشخصيات)
+        # =========================================
+        logger.info("🔍 البحث في SauceNAO...")
+        saucenao_result = await saucenao_search(image_data)
+
+        if saucenao_result and saucenao_result.get("results"):
+            best = saucenao_result["results"][0]
+            header = best.get("header", {})
+            sim = float(header.get("similarity", 0))
+            logger.info(f"📊 SauceNAO Similarity: {sim}%")
+
+            if sim > 60:  # تقليل الحد لنتائج أفضل
+                data = best.get("data", {})
+                char_name = data.get("character") or data.get("source") or data.get("creator") or "غير معروف"
+                ext_urls = data.get("ext_urls", [])
+                source_url = ext_urls[0] if ext_urls else "#"
+
+                # إنشاء Embed للنتيجة
+                embed = build_recognition_embed(
+                    title=f"🎭 تم التعرف على الشخصية!",
+                    description=f"**{char_name}**\n\n📊 التشابه: **{sim:.2f}%**\n🔗 [المصدر]({source_url})",
+                    thumbnail=header.get("thumbnail"),
+                    color=Theme.PURPLE,
+                    footer=f"🌸 Uniq • من: {message.author.name}"
+                )
+
+                # إضافة معلومات إضافية إذا وجدت
+                if creator := data.get("creator"):
+                    embed.add_field(name="🎨 الصانع", value=creator, inline=True)
+                if source := data.get("source"):
+                    embed.add_field(name="📺 المصدر", value=source, inline=True)
+
+                await loading_msg.edit(embed=embed)
+                logger.info(f"✅ تم التعرف على شخصية: {char_name}")
+                return
+
+        # =========================================
+        # البحث في Trace.moe (الأنمي)
+        # =========================================
+        logger.info("🔍 البحث في Trace.moe...")
+        trace_result = await trace_moe_search(image_data)
+
+        if trace_result and trace_result.get("result") and len(trace_result["result"]) > 0:
+            best = trace_result["result"][0]
+            anilist = best.get("anilist", {})
+            sim = best.get("similarity", 0)
+            logger.info(f"📊 Trace.moe Similarity: {sim * 100:.2f}%")
+
+            if sim > 0.5:  # حد أدنى 50%
+                anime_title = anilist.get("title", {}).get("romaji", "؟")
+                anime_title_native = anilist.get("title", {}).get("native")
+                episode = best.get("episode")
+                from_time = best.get("from", 0)
+                image_url = best.get("image")
+                mal_id = anilist.get("id")
+
+                # جلب معلومات الأنمي الكاملة
+                full_anime = None
+                if mal_id:
+                    full_anime = await get_anime_details(mal_id) if str(mal_id).isdigit() else None
+
+                # إنشاء Embed
+                embed = build_recognition_embed(
+                    title=f"🎬 تم التعرف على الأنمي!",
+                    description=f"**{anime_title}**" + (f"\n🇯🇵 {anime_title_native}" if anime_title_native else ""),
+                    thumbnail=image_url,
+                    color=Theme.ACCENT,
+                    footer=f"🌸 Uniq • من: {message.author.name}"
+                )
+
+                embed.add_field(name="📺 الحلقة", value=f"**{episode or '؟'}**", inline=True)
+                embed.add_field(name="⏱️ الوقت", value=f"**{format_timestamp(from_time)}**", inline=True)
+
+                sim_percent = round(sim * 100, 2)
+                indicator = "✅" if sim_percent > 87 else ("⚠️" if sim_percent > 80 else "❌")
+                embed.add_field(name="📊 التشابه", value=f"**{sim_percent}%** {indicator}", inline=True)
+
+                if full_anime:
+                    if score := full_anime.get("score"):
+                        embed.add_field(name="⭐ التقييم", value=f"**{score}/10**", inline=True)
+                    if genres := genres_text(full_anime, 3):
+                        embed.add_field(name="🎭 التصنيفات", value=genres, inline=False)
+
+                # إضافة رابط MAL
+                if mal_id and str(mal_id).isdigit():
+                    embed.add_field(name="🔗 رابط MAL", value=f"[MyAnimeList](https://myanimelist.net/anime/{mal_id})", inline=False)
+
+                await loading_msg.edit(embed=embed)
+                logger.info(f"✅ تم التعرف على أنمي: {anime_title}")
+                return
+
+        # =========================================
+        # لم يتم التعرف
+        # =========================================
+        logger.warning("❌ لم يتم التعرف على أي نتيجة")
+        await loading_msg.edit(embed=error_embed("❌ لم يتم التعرف على هذه الصورة.\n\n💡 تأكد من:\n• أن الصورة تحتوي على أنمي أو شخصية أنمي\n• أن جودة الصورة جيدة\n• أن روم التعرف مفعّل"))
+
+    except Exception as e:
+        logger.error(f"❌ خطأ في process_auto_recognition: {e}")
+        try:
+            await loading_msg.edit(embed=error_embed(f"❌ حدث خطأ أثناء التحليل: {str(e)[:100]}"))
+        except:
+            pass
+
+# ═══════════════════════════════════════════════════════════════
+# 📰 NEWS BROADCAST LOOPS
+# ═══════════════════════════════════════════════════════════════
+
+async def get_news_items(category: str, limit: int = 5) -> List[dict]:
+    if category == "anime":
+        return await get_seasonal_anime(limit)
+    elif category == "manga":
+        return await get_top_manga(limit)
+    elif category == "manhwa":
+        return await get_top_manga(limit)
+    return []
+
+async def news_broadcast_loop(category: str):
     await bot.wait_until_ready()
+    cat_name = get_category_name(category)
+    logger.info(f"🔄 بدء Loop نشر أخبار {cat_name}")
+
     while not bot.is_closed():
         try:
-            anime_list = await get_seasonal_anime(5)
-            for anime in anime_list:
-                mid = str(anime.get("mal_id", ""))
-                if mid and mid != db.last_anime_news_id:
-                    db.last_anime_news_id = mid
-                    db.save()
-                    for conf in db.get_channels("anime"):
+            items = await get_news_items(category, 5)
+            last_id = db.get_last_news_id(category)
+
+            for item in items:
+                mid = str(item.get("mal_id", ""))
+                if mid and mid != last_id:
+                    db.set_last_news_id(category, mid)
+                    channels = db.get_news_channels(category)
+                    for conf in channels:
                         if chan := bot.get_channel(conf.channel_id):
-                            await chan.send(embed=build_news_embed(anime, "anime"), view=NotificationView(conf.channel_id, "anime"))
+                            try:
+                                embed = build_news_embed_full(item, category)
+                                view = NewsActionsView(item, conf.channel_id, category)
+                                await chan.send(embed=embed, view=view)
+                                logger.info(f"📰 تم نشر خبر {cat_name}: {item.get('title')}")
+                            except Exception as e:
+                                logger.error(f"❌ خطأ في نشر الخبر: {e}")
+
             await asyncio.sleep(300)
         except Exception as e:
-            logger.error(f"Error in news loop: {e}")
+            logger.error(f"❌ خطأ في {cat_name} loop: {e}")
             await asyncio.sleep(60)
 
 # ═══════════════════════════════════════════════════════════════
@@ -577,40 +922,45 @@ async def news_broadcast_loop():
 
 @bot.tree.command(name="help", description="مساعدة وأوامر البوت")
 async def help_cmd(interaction: discord.Interaction):
-    embed = discord.Embed(title="🌸 Uniq v1.0 - المساعدة", description="أوامر البوت المتاحة:", color=Theme.CARD_BG)
-    embed.add_field(name="🔍 البحث", value="`/anime [اسم]`\n`/character [اسم]`\n`/suggest`", inline=False)
-    embed.add_field(name="📊 التصنيفات", value="`/top`\n`/season`\n`/upcoming`\n`/airing`", inline=False)
-    embed.add_field(name="🖼️ التعرف", value="`/setrecog`\n`/clearrecog`", inline=False)
-    embed.add_field(name="🔧 الإدارة", value="`/setup`\n`/remove`\n`/list`", inline=False)
+    embed = discord.Embed(title="🌸 Uniq v2.1 - المساعدة", description="أوامر البوت المتاحة:", color=Theme.CARD_BG)
+    embed.add_field(name="🎬 الأنمي", value="`/anime` `/top` `/season` `/upcoming` `/airing` `/suggest`", inline=False)
+    embed.add_field(name="📚 المانجا", value="`/manga` `/manga-top` `/manga-new`", inline=False)
+    embed.add_field(name="📜 المانهوا", value="`/manhwa` `/manhwa-top`", inline=False)
+    embed.add_field(name="🎭 الشخصيات", value="`/character`", inline=False)
+    embed.add_field(name="🖼️ التعرف", value="`/setrecog` `/clearrecog` `/recog-status`", inline=False)
+    embed.add_field(name="📰 الأخبار", value="`/activate-anime` `/activate-manga` `/activate-manhwa`\n`/deactivate` `/news-status`", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ═══════════════════════════════════════════════════════════════
+# 🎬 ANIME COMMANDS
+# ═══════════════════════════════════════════════════════════════
 
 @bot.tree.command(name="anime", description="البحث عن أنمي")
 async def anime_cmd(interaction: discord.Interaction, name: str):
     await interaction.response.defer()
     res = await search_anime(name)
-    if res: await interaction.followup.send(embed=build_search_embed(name, res), view=SearchDropdown(res, interaction.user.id))
-    else: await interaction.followup.send(embed=error_embed("لم يتم العثور على نتائج."))
-
-@bot.tree.command(name="character", description="البحث عن شخصية")
-async def character_cmd(interaction: discord.Interaction, name: str):
-    await interaction.response.defer()
-    res = await search_character(name)
-    if res: await interaction.followup.send(embed=build_character_search_embed(name, res), view=CharacterSearchDropdown(res, interaction.user.id))
-    else: await interaction.followup.send(embed=error_embed("لم يتم العثور على نتائج."))
+    if res:
+        await interaction.followup.send(embed=build_search_embed(name, res, "anime"), view=SearchDropdown(res, interaction.user.id, "anime"))
+    else:
+        await interaction.followup.send(embed=error_embed("لم يتم العثور على نتائج."))
 
 @bot.tree.command(name="suggest", description="اقتراح أنمي عشوائي")
 async def suggest_cmd(interaction: discord.Interaction):
     await interaction.response.defer()
     ani = await get_random_anime()
-    if ani: await interaction.followup.send(embed=build_main_embed(ani, "🎲 "), view=AnimeActionsView(ani, interaction.user.id))
-    else: await interaction.followup.send(embed=error_embed("خطأ في جلب البيانات."))
+    if ani:
+        await interaction.followup.send(embed=build_main_embed(ani, "🎲 ", "anime"), view=ItemActionsView(ani, interaction.user.id, "anime"))
+    else:
+        await interaction.followup.send(embed=error_embed("خطأ في جلب البيانات."))
 
 @bot.tree.command(name="top", description="أفضل 10 أنمي")
 async def top_cmd(interaction: discord.Interaction):
     await interaction.response.defer()
     res = await get_top_anime()
-    if res: await interaction.followup.send(embed=build_top_embed(res))
-    else: await interaction.followup.send(embed=error_embed("خطأ في جلب البيانات."))
+    if res:
+        await interaction.followup.send(embed=build_top_embed(res, "anime"))
+    else:
+        await interaction.followup.send(embed=error_embed("خطأ في جلب البيانات."))
 
 @bot.tree.command(name="season", description="أنمي الموسم")
 async def season_cmd(interaction: discord.Interaction):
@@ -618,7 +968,8 @@ async def season_cmd(interaction: discord.Interaction):
     res = await get_seasonal_anime()
     if res:
         embed = discord.Embed(title="🌸 أنمي الموسم", color=Theme.ACCENT)
-        for i, a in enumerate(res[:10]): embed.add_field(name=f"{i+1}. {a.get('title')}", value=f"⭐ {a.get('score', '؟')}", inline=False)
+        for i, a in enumerate(res[:10]):
+            embed.add_field(name=f"{i+1}. {a.get('title')}", value=f"⭐ {a.get('score', '؟')}", inline=False)
         await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="upcoming", description="أنميات قادمة")
@@ -627,52 +978,190 @@ async def upcoming_cmd(interaction: discord.Interaction):
     res = await get_upcoming_anime()
     if res:
         embed = discord.Embed(title="⏳ أنميات قادمة", color=Theme.WARNING)
-        for i, a in enumerate(res[:10]): embed.add_field(name=f"{i+1}. {a.get('title')}", value=f"📅 {a.get('aired', {}).get('string', 'قريباً')}", inline=False)
+        for i, a in enumerate(res[:10]):
+            embed.add_field(name=f"{i+1}. {a.get('title')}", value=f"📅 {a.get('aired', {}).get('string', 'قريباً')}", inline=False)
         await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="airing", description="يعرض حالياً")
-async def airing_cmd(interaction: discord.Interaction, name: Optional[str] = None):
+async def airing_cmd(interaction: discord.Interaction):
     await interaction.response.defer()
     res = await get_airing_anime()
     if res:
         embed = discord.Embed(title="🔄 يعرض حالياً", color=Theme.INFO)
-        for i, a in enumerate(res[:10]): embed.add_field(name=f"{i+1}. {a.get('title')}", value=f"⭐ {a.get('score', '؟')}", inline=False)
+        for i, a in enumerate(res[:10]):
+            embed.add_field(name=f"{i+1}. {a.get('title')}", value=f"⭐ {a.get('score', '؟')}", inline=False)
         await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="setrecog", description="تفعيل روم التعرف")
+# ═══════════════════════════════════════════════════════════════
+# 📚 MANGA COMMANDS
+# ═══════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="manga", description="البحث عن مانجا")
+async def manga_cmd(interaction: discord.Interaction, name: str):
+    await interaction.response.defer()
+    res = await search_manga(name)
+    if res:
+        await interaction.followup.send(embed=build_search_embed(name, res, "manga"), view=SearchDropdown(res, interaction.user.id, "manga"))
+    else:
+        await interaction.followup.send(embed=error_embed("لم يتم العثور على نتائج."))
+
+@bot.tree.command(name="manga-top", description="أفضل 10 مانجا")
+async def manga_top_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    res = await get_top_manga()
+    if res:
+        await interaction.followup.send(embed=build_top_embed(res, "manga"))
+    else:
+        await interaction.followup.send(embed=error_embed("خطأ في جلب البيانات."))
+
+@bot.tree.command(name="manga-new", description="مانجا جديدة")
+async def manga_new_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    res = await get_publishing_manga()
+    if res:
+        embed = discord.Embed(title="📚 مانجا تُنشر حالياً", color=Theme.PURPLE)
+        for i, m in enumerate(res[:10]):
+            embed.add_field(name=f"{i+1}. {m.get('title')}", value=f"📖 {get_total_chapters(m)} | ⭐ {m.get('score', '؟')}", inline=False)
+        await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="manhwa", description="البحث عن مانهوا")
+async def manhwa_cmd(interaction: discord.Interaction, name: str):
+    await interaction.response.defer()
+    res = await search_manga(name)
+    if res:
+        await interaction.followup.send(embed=build_search_embed(name, res, "manhwa"), view=SearchDropdown(res, interaction.user.id, "manhwa"))
+    else:
+        await interaction.followup.send(embed=error_embed("لم يتم العثور على نتائج."))
+
+@bot.tree.command(name="manhwa-top", description="أفضل 10 مانهوا")
+async def manhwa_top_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    res = await get_top_manga()
+    if res:
+        await interaction.followup.send(embed=build_top_embed(res, "manhwa"))
+    else:
+        await interaction.followup.send(embed=error_embed("خطأ في جلب البيانات."))
+
+@bot.tree.command(name="character", description="البحث عن شخصية")
+async def character_cmd(interaction: discord.Interaction, name: str):
+    await interaction.response.defer()
+    res = await search_character(name)
+    if res:
+        await interaction.followup.send(embed=build_character_search_embed(name, res), view=CharacterSearchDropdown(res, interaction.user.id))
+    else:
+        await interaction.followup.send(embed=error_embed("لم يتم العثور على نتائج."))
+
+# ═══════════════════════════════════════════════════════════════
+# 🖼️ RECOGNITION COMMANDS (مُصلّح)
+# ═══════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="setrecog", description="تفعيل روم التعرف التلقائي على الصور")
 @app_commands.default_permissions(manage_channels=True)
 async def setrecog_cmd(interaction: discord.Interaction):
+    """تفعيل روم التعرف - أرسل صورة في هذا الروم وسيتم التعرف عليها"""
     db.set_recognition_channel(interaction.channel_id)
-    await interaction.response.send_message(embed=success_embed("تم التفعيل", "تم تفعيل روم التعرف التلقائي في هذا الروم."), ephemeral=True)
 
-@bot.tree.command(name="clearrecog", description="إيقاف التعرف")
+    embed = success_embed("✅ تم تفعيل روم التعرف!", f"📍 الروم: {interaction.channel.mention}\n\n🖼️ أرسل صورة في هذا الروم وسأقوم بالتعرف عليها!\n\n🔍 البحث في:\n• SauceNAO (الشخصيات)\n• Trace.moe (الأنمي)")
+    embed.add_field(name="💡 ملاحظات", value="• استخدم `/recog-status` لعرض الحالة\n• استخدم `/clearrecog` لإلغاء التفعيل", inline=False)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="clearrecog", description="إيقاف التعرف التلقائي")
 @app_commands.default_permissions(manage_channels=True)
 async def clearrecog_cmd(interaction: discord.Interaction):
+    """إيقاف روم التعرف التلقائي"""
     db.clear_recognition_channel()
-    await interaction.response.send_message(embed=success_embed("تم الإيقاف", "تم إيقاف التعرف التلقائي."), ephemeral=True)
+    await interaction.response.send_message(embed=success_embed("❌ تم إيقاف التعرف", "تم إيقاف روم التعرف التلقائي."), ephemeral=True)
 
-@bot.tree.command(name="setup", description="تخصيص الروم")
-@app_commands.describe(category="anime, manga, manhwa")
+@bot.tree.command(name="recog-status", description="عرض حالة نظام التعرف")
 @app_commands.default_permissions(manage_channels=True)
-async def setup_cmd(interaction: discord.Interaction, category: str):
-    if category not in ["anime", "manga", "manhwa"]:
-        return await interaction.response.send_message(embed=error_embed("فئة غير صالحة."), ephemeral=True)
-    db.add_channel(interaction.channel_id, category)
-    await interaction.response.send_message(embed=success_embed("تم التخصيص", f"تم تخصيص الروم لـ {get_category_name(category)}."), ephemeral=True)
+async def recog_status_cmd(interaction: discord.Interaction):
+    """عرض حالة روم التعرف"""
+    if db.recognition_channel_id:
+        embed = success_embed("🖼️ حالة التعرف", f"✅ روم التعرف مفعّل!\n📍 الروم ID: `{db.recognition_channel_id}`\n\n💡 أرسل صورة في الروم المفعّل لبدء التعرف.")
+    else:
+        embed = info_embed("🖼️ حالة التعرف", "❌ روم التعرف غير مفعّل.\n\nاستخدم `/setrecog` في الروم الذي تريد تفعيله.", Theme.WARNING)
 
-@bot.tree.command(name="remove", description="إزالة التخصيص")
-@app_commands.default_permissions(manage_channels=True)
-async def remove_cmd(interaction: discord.Interaction):
-    db.remove_channel(interaction.channel_id)
-    await interaction.response.send_message(embed=success_embed("تم الإزالة", "تم إزالة تخصيص الروم."), ephemeral=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="list", description="الرومات المفعّلة")
+# ═══════════════════════════════════════════════════════════════
+# 📰 NEWS ACTIVATION COMMANDS
+# ═══════════════════════════════════════════════════════════════
+
+@bot.tree.command(name="activate-anime", description="تفعيل روم أخبار الأنمي")
 @app_commands.default_permissions(manage_channels=True)
-async def list_cmd(interaction: discord.Interaction):
-    chans = db.get_channels()
-    desc = "\n".join([f"<#{c.channel_id}> - {get_category_name(c.category)}" for c in chans]) if chans else "لا توجد رومات."
-    await interaction.response.send_message(embed=info_embed("الرومات المفعّلة", desc), ephemeral=True)
+async def activate_anime_cmd(interaction: discord.Interaction):
+    if db.is_channel_configured(interaction.channel_id, "anime"):
+        await interaction.response.send_message(embed=info_embed("مفعّل مسبقاً", "هذا الروم مفعّل لأخبار الأنمي!", Theme.ACCENT), ephemeral=True)
+        return
+    db.add_news_channel(interaction.channel_id, "anime")
+    embed = success_embed("✅ تم التفعيل", f"سيتم نشر أخبار الأنمي تلقائياً في هذا الروم!\n📰 الروم: {interaction.channel.mention}")
+    embed.add_field(name="💡 أوامر الأخبار", value="`/deactivate` - إلغاء التفعيل\n`/news-status` - عرض الحالة", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="activate-manga", description="تفعيل روم أخبار المانجا")
+@app_commands.default_permissions(manage_channels=True)
+async def activate_manga_cmd(interaction: discord.Interaction):
+    if db.is_channel_configured(interaction.channel_id, "manga"):
+        await interaction.response.send_message(embed=info_embed("مفعّل مسبقاً", "هذا الروم مفعّل لأخبار المانجا!", Theme.PURPLE), ephemeral=True)
+        return
+    db.add_news_channel(interaction.channel_id, "manga")
+    embed = success_embed("✅ تم التفعيل", f"سيتم نشر أخبار المانجا تلقائياً في هذا الروم!\n📰 الروم: {interaction.channel.mention}")
+    embed.add_field(name="💡 أوامر الأخبار", value="`/deactivate` - إلغاء التفعيل\n`/news-status` - عرض الحالة", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="activate-manhwa", description="تفعيل روم أخبار المانهوا")
+@app_commands.default_permissions(manage_channels=True)
+async def activate_manhwa_cmd(interaction: discord.Interaction):
+    if db.is_channel_configured(interaction.channel_id, "manhwa"):
+        await interaction.response.send_message(embed=info_embed("مفعّل مسبقاً", "هذا الروم مفعّل لأخبار المانهوا!", Theme.INFO), ephemeral=True)
+        return
+    db.add_news_channel(interaction.channel_id, "manhwa")
+    embed = success_embed("✅ تم التفعيل", f"سيتم نشر أخبار المانهوا تلقائياً في هذا الروم!\n📰 الروم: {interaction.channel.mention}")
+    embed.add_field(name="💡 أوامر الأخبار", value="`/deactivate` - إلغاء التفعيل\n`/news-status` - عرض الحالة", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="deactivate", description="إلغاء تفعيل روم الأخبار")
+@app_commands.describe(category="الفئة: anime, manga, manhwa, all")
+@app_commands.default_permissions(manage_channels=True)
+async def deactivate_cmd(interaction: discord.Interaction, category: str):
+    categories = ["anime", "manga", "manhwa", "all"]
+    if category not in categories:
+        return await interaction.response.send_message(embed=error_embed("فئة غير صالحة. استخدم: anime, manga, manhwa, all"), ephemeral=True)
+
+    removed = []
+    for cat in ["anime", "manga", "manhwa"]:
+        if category == "all" or category == cat:
+            if db.is_channel_configured(interaction.channel_id, cat):
+                db.remove_news_channel(interaction.channel_id, cat)
+                removed.append(get_category_name(cat))
+
+    if removed:
+        await interaction.response.send_message(embed=success_embed("تم الإلغاء", f"تم إلغاء تفعيل: {', '.join(removed)}"), ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=info_embed("غير مفعّل", "هذا الروم غير مفعّل لأي فئة!", Theme.WARNING), ephemeral=True)
+
+@bot.tree.command(name="news-status", description="عرض حالة نظام الأخبار")
+@app_commands.default_permissions(manage_channels=True)
+async def news_status_cmd(interaction: discord.Interaction):
+    embed = discord.Embed(title="📰 حالة نظام الأخبار", color=Theme.CARD_BG)
+    status_text = ""
+    for cat in ["anime", "manga", "manhwa"]:
+        channels = db.get_news_channels(cat)
+        cat_emoji = get_category_emoji(cat)
+        cat_name = get_category_name(cat)
+        if channels:
+            channel_list = "\n".join([f"<#{c.channel_id}>" for c in channels])
+            status_text += f"\n\n{cat_emoji} **{cat_name}** ({len(channels)} روم):\n{channel_list}"
+        else:
+            status_text += f"\n\n{cat_emoji} **{cat_name}**: ❌ لا توجد رومات"
+    embed.description = status_text if status_text else "❌ لا توجد رومات مفعّلة"
+    embed.add_field(name="💡 طريقة التفعيل", value="1️⃣ اذهب للروم\n2️⃣ استخدم: `/activate-anime` أو `/activate-manga` أو `/activate-manhwa`", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 if __name__ == "__main__":
-    if TOKEN: bot.run(TOKEN)
-    else: logger.error("❌ TOKEN NOT FOUND")
+    if TOKEN:
+        logger.info("🚀 جاري تشغيل البوت...")
+        bot.run(TOKEN)
+    else:
+        logger.error("❌ TOKEN NOT FOUND - أضف TOKEN في ملف .env")
