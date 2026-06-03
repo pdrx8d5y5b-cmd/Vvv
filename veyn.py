@@ -1,6 +1,6 @@
-# 🔥 Uniq — بوت الأنمي v2.1 Fixed Edition
+# 🔥 Uniq — بوت الأنمي v2.2 Final Edition
 # نظام التعرف على الصور + نظام الأخبار المقسم
-# مُصلّح ومُحسّن بالكامل
+# مُصحّح بالكامل - URLs صحيحة
 
 import discord
 from discord.ext import commands
@@ -27,10 +27,9 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
 # ═══════════════════════════════════════════════════════════════
-# ⚠️ API KEYS - ضروري إدخالهم
+# ⚠️ API KEYS
 # ═══════════════════════════════════════════════════════════════
 
-# SauceNAO API Key - احصل عليه من https://saucenao.com/
 SAUCENAO_API_KEY = os.getenv("SAUCENAO_API_KEY", "c7626f0f3cb1519513dea1ca5d2a2f307d2a5327")
 
 # ═══════════════════════════════════════════════════════════════
@@ -41,7 +40,6 @@ DATA_DIR = "/home/ubuntu/data"
 CHANNELS_FILE = f"{DATA_DIR}/news_channels.json"
 CACHE_FILE = f"{DATA_DIR}/cache.json"
 RECOGNITION_CHANNEL_FILE = f"{DATA_DIR}/recognition_channel.json"
-RECOGNITION_LOG_FILE = f"{DATA_DIR}/recognition_log.json"
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -55,7 +53,6 @@ class NewsChannelConfig:
     category: str
     enabled: bool = True
     last_news_id: str = ""
-    last_check_time: float = 0.0
 
 class NewsDatabase:
     def __init__(self):
@@ -152,8 +149,6 @@ db = NewsDatabase()
 # ═══════════════════════════════════════════════════════════════
 
 JIKAN_BASE = "https://api.jikan.moe/v4"
-TRACE_MOE_URL = "https://api.trace.moe/search"
-SAUCENAO_URL = "https://saucenao.com/api.php"
 
 _rate_limiter = asyncio.Semaphore(1)
 _jikan_cache = {}
@@ -238,28 +233,31 @@ async def get_characters(mal_id: int) -> List[dict]:
     return data.get("data", []) if data else []
 
 # ═══════════════════════════════════════════════════════════════
-# 🖼️ IMAGE RECOGNITION APIs (مُصلّح)
+# 🖼️ IMAGE RECOGNITION APIs (URLs مُصحّحة)
 # ═══════════════════════════════════════════════════════════════
 
 async def saucenao_search(image_data: bytes) -> Optional[dict]:
     """
     البحث في SauceNAO باستخدام API Key
+    ✅ URL الصحيح: https://saucenao.com/api.php
     """
-    if not SAUCENAO_API_KEY or SAUCENAO_API_KEY == "YOUR_SAUCENAO_API_KEY":
-        logger.warning("⚠️ SauceNAO API Key غير موجود!")
+    if not SAUCENAO_API_KEY or len(SAUCENAO_API_KEY) < 10:
+        logger.warning("⚠️ SauceNAO API Key غير موجود أو قصير!")
         return None
 
     try:
         async with aiohttp.ClientSession() as session:
-            # إرسال طلب POST مع الملف و الـ API Key
+            # إنشاء Form Data
             form = aiohttp.FormData()
             form.add_field('output_type', '2')  # JSON output
             form.add_field('api_key', SAUCENAO_API_KEY)
-            form.add_field('file', ('image.jpg', image_data, 'image/jpeg'))
+            form.add_field('file', ('image.png', image_data, 'image/png'))
 
-            logger.info(f"🔍 جاري البحث في SauceNAO...")
+            logger.info("🔍 جاري البحث في SauceNAO...")
+
+            # ✅ URL الصحيح هو api.php وليس search.php
             async with session.post(
-                SAUCENAO_URL,
+                "https://saucenao.com/api.php",
                 data=form,
                 timeout=aiohttp.ClientTimeout(total=60)
             ) as response:
@@ -267,10 +265,14 @@ async def saucenao_search(image_data: bytes) -> Optional[dict]:
 
                 if response.status == 200:
                     result = await response.json()
-                    logger.info(f"✅ SauceNAO Result: {result.get('header', {}).get('results_returned', 0)} results")
+                    results_count = len(result.get('results', []))
+                    logger.info(f"✅ SauceNAO: {results_count} نتائج")
                     return result
+
+                elif response.status == 401:
+                    logger.error("❌ SauceNAO: API Key غير صحيح")
                 elif response.status == 403:
-                    logger.error("❌ SauceNAO: API Key غير صحيح أو انتهت صلاحيته")
+                    logger.error("❌ SauceNAO: تم رفض الوصول - تحقق من الـ API Key")
                 elif response.status == 429:
                     logger.error("❌ SauceNAO: تم تجاوز الحد المسموح")
                 else:
@@ -290,15 +292,19 @@ async def saucenao_search(image_data: bytes) -> Optional[dict]:
 async def trace_moe_search(image_data: bytes) -> Optional[dict]:
     """
     البحث في Trace.moe (مجاني - لا يحتاج API Key)
+    ✅ URL الصحيح: https://api.trace.moe/search
     """
     try:
         async with aiohttp.ClientSession() as session:
+            # إنشاء Form Data مع الملف
             form = aiohttp.FormData()
-            form.add_field('image', ('image.jpg', image_data, 'image/jpeg'))
+            form.add_field('image', ('image.png', image_data, 'image/png'))
 
-            logger.info(f"🔍 جاري البحث في Trace.moe...")
+            logger.info("🔍 جاري البحث في Trace.moe...")
+
+            # ✅ URL صحيح
             async with session.post(
-                TRACE_MOE_URL,
+                "https://api.trace.moe/search",
                 data=form,
                 timeout=aiohttp.ClientTimeout(total=60)
             ) as response:
@@ -307,8 +313,19 @@ async def trace_moe_search(image_data: bytes) -> Optional[dict]:
                 if response.status == 200:
                     result = await response.json()
                     if result.get("result"):
-                        logger.info(f"✅ Trace.moe: تم العثور على {len(result['result'])} نتيجة")
+                        logger.info(f"✅ Trace.moe: {len(result['result'])} نتيجة")
+                    else:
+                        logger.warning("⚠️ Trace.moe: لا توجد نتائج")
                     return result
+
+                elif response.status == 400:
+                    text = await response.text()
+                    logger.error(f"❌ Trace.moe: {text}")
+                    # قد تكون المشكلة في صيغة الملف - جرب بصيغة أخرى
+                elif response.status == 413:
+                    logger.error("❌ Trace.moe: الصورة كبيرة جداً")
+                elif response.status == 429:
+                    logger.error("❌ Trace.moe: تم تجاوز الحد المسموح")
                 else:
                     text = await response.text()
                     logger.error(f"❌ Trace.moe Error: {response.status} - {text[:200]}")
@@ -323,18 +340,43 @@ async def trace_moe_search(image_data: bytes) -> Optional[dict]:
     return None
 
 
-async def process_image_with_url(image_url: str) -> Optional[bytes]:
+async def trace_moe_search_with_retry(image_data: bytes) -> Optional[dict]:
     """
-    تحميل الصورة من رابط
+    محاولة البحث بصيغ مختلفة
     """
+    # محاولة 1: PNG
+    result = await trace_moe_search(image_data)
+    if result and result.get("result"):
+        return result
+
+    # محاولة 2: JPEG
     try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(image_data))
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        output = io.BytesIO()
+        img.save(output, format='JPEG', quality=85)
+        jpeg_data = output.getvalue()
+
         async with aiohttp.ClientSession() as session:
-            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=30)) as r:
-                if r.status == 200:
-                    return await r.read()
+            form = aiohttp.FormData()
+            form.add_field('image', ('image.jpg', jpeg_data, 'image/jpeg'))
+
+            async with session.post(
+                "https://api.trace.moe/search",
+                data=form,
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                if response.status == 200:
+                    return await response.json()
+    except ImportError:
+        logger.warning("⚠️ PIL غير موجود - لا يمكن تحويل الصورة")
     except Exception as e:
-        logger.error(f"❌ خطأ في تحميل الصورة: {e}")
-    return None
+        logger.error(f"❌ خطأ في تحويل الصورة: {e}")
+
+    return result  # رجع النتيجة السابقة حتى لو فشلت
 
 # ═══════════════════════════════════════════════════════════════
 # 🎨 THEME & UTILS
@@ -528,7 +570,6 @@ def build_character_detail_embed(char: dict, anime_list: List[dict] = None) -> d
 
 def build_news_embed_full(item: dict, category: str = "anime") -> discord.Embed:
     title = item.get("title", "؟")
-    title_jp = item.get("title_japanese", "")
     mal_id = item.get("mal_id", 0)
     source = get_studios_or_authors(item, category)
     description = synopsis_full(item, 400)
@@ -561,22 +602,6 @@ def build_news_embed_full(item: dict, category: str = "anime") -> discord.Embed:
     if thumb := get_image(item, "thumbnail"):
         embed.set_thumbnail(url=thumb)
     embed.set_footer(text=f"🌸 Uniq • MAL ID: {mal_id}")
-    return embed
-
-def build_recognition_result_embed(anime_title: str, anime_title_jp: str = None, episode: str = None, timestamp_str: str = None, similarity: float = None, image_preview: str = None, mal_url: str = None, full_anime: dict = None) -> discord.Embed:
-    embed = discord.Embed(title=f"🎬 {anime_title}", color=Theme.ACCENT, url=mal_url, timestamp=discord.utils.utcnow())
-    if anime_title_jp: embed.description = f"🇯🇵 *{anime_title_jp}*"
-    if episode: embed.add_field(name="📺 الحلقة", value=f"**{episode}**", inline=True)
-    if timestamp_str: embed.add_field(name="⏱️ الوقت", value=f"**{timestamp_str}**", inline=True)
-    if similarity is not None:
-        sim = round(similarity * 100, 2)
-        indicator = "✅" if sim > 87 else ("⚠️" if sim > 80 else "❌")
-        embed.add_field(name="📊 التشابه", value=f"**{sim}%** {indicator}", inline=True)
-    if full_anime:
-        if score := full_anime.get("score"): embed.add_field(name="⭐ التقييم", value=f"**{score}/10**", inline=True)
-        embed.add_field(name="🎭 التصنيفات", value=genres_text(full_anime, 3), inline=False)
-    if image_preview: embed.set_thumbnail(url=image_preview)
-    embed.set_footer(text="🌸 Uniq • التعرف التلقائي")
     return embed
 
 def build_recognition_embed(title: str, description: str, thumbnail: str = None, color: int = Theme.PURPLE, footer: str = None) -> discord.Embed:
@@ -730,6 +755,7 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 async def on_ready():
     logger.info(f'✅ Logged in as {bot.user.name}')
     logger.info(f'📋 Recognition Channel: {db.recognition_channel_id}')
+    logger.info(f'🔑 SauceNAO API Key: {" موجود" if len(SAUCENAO_API_KEY or "") > 10 else " غير موجود"}')
     await bot.tree.sync()
     bot.loop.create_task(news_broadcast_loop("anime"))
     bot.loop.create_task(news_broadcast_loop("manga"))
@@ -749,9 +775,7 @@ async def process_auto_recognition(message: discord.Message, attachment: discord
     """
     معالجة الصورة المرفقة - التعرف التلقائي
     """
-    # التحقق من روم التعرف
     if not db.recognition_channel_id:
-        logger.warning("⚠️ روم التعرف غير مفعّل!")
         return
 
     if message.channel.id != db.recognition_channel_id:
@@ -762,7 +786,7 @@ async def process_auto_recognition(message: discord.Message, attachment: discord
     try:
         # قراءة الصورة
         image_data = await attachment.read()
-        image_size = len(image_data) / 1024  # KB
+        image_size = len(image_data) / 1024
         logger.info(f"📊 حجم الصورة: {image_size:.2f} KB")
 
         # رسالة التحميل
@@ -780,13 +804,12 @@ async def process_auto_recognition(message: discord.Message, attachment: discord
             sim = float(header.get("similarity", 0))
             logger.info(f"📊 SauceNAO Similarity: {sim}%")
 
-            if sim > 60:  # تقليل الحد لنتائج أفضل
+            if sim > 50:  # حد أدنى 50%
                 data = best.get("data", {})
                 char_name = data.get("character") or data.get("source") or data.get("creator") or "غير معروف"
                 ext_urls = data.get("ext_urls", [])
                 source_url = ext_urls[0] if ext_urls else "#"
 
-                # إنشاء Embed للنتيجة
                 embed = build_recognition_embed(
                     title=f"🎭 تم التعرف على الشخصية!",
                     description=f"**{char_name}**\n\n📊 التشابه: **{sim:.2f}%**\n🔗 [المصدر]({source_url})",
@@ -795,7 +818,6 @@ async def process_auto_recognition(message: discord.Message, attachment: discord
                     footer=f"🌸 Uniq • من: {message.author.name}"
                 )
 
-                # إضافة معلومات إضافية إذا وجدت
                 if creator := data.get("creator"):
                     embed.add_field(name="🎨 الصانع", value=creator, inline=True)
                 if source := data.get("source"):
@@ -817,7 +839,7 @@ async def process_auto_recognition(message: discord.Message, attachment: discord
             sim = best.get("similarity", 0)
             logger.info(f"📊 Trace.moe Similarity: {sim * 100:.2f}%")
 
-            if sim > 0.5:  # حد أدنى 50%
+            if sim > 0.4:  # حد أدنى 40%
                 anime_title = anilist.get("title", {}).get("romaji", "؟")
                 anime_title_native = anilist.get("title", {}).get("native")
                 episode = best.get("episode")
@@ -827,10 +849,9 @@ async def process_auto_recognition(message: discord.Message, attachment: discord
 
                 # جلب معلومات الأنمي الكاملة
                 full_anime = None
-                if mal_id:
-                    full_anime = await get_anime_details(mal_id) if str(mal_id).isdigit() else None
+                if mal_id and str(mal_id).isdigit():
+                    full_anime = await get_anime_details(mal_id)
 
-                # إنشاء Embed
                 embed = build_recognition_embed(
                     title=f"🎬 تم التعرف على الأنمي!",
                     description=f"**{anime_title}**" + (f"\n🇯🇵 {anime_title_native}" if anime_title_native else ""),
@@ -843,7 +864,7 @@ async def process_auto_recognition(message: discord.Message, attachment: discord
                 embed.add_field(name="⏱️ الوقت", value=f"**{format_timestamp(from_time)}**", inline=True)
 
                 sim_percent = round(sim * 100, 2)
-                indicator = "✅" if sim_percent > 87 else ("⚠️" if sim_percent > 80 else "❌")
+                indicator = "✅" if sim_percent > 85 else ("⚠️" if sim_percent > 70 else "❌")
                 embed.add_field(name="📊 التشابه", value=f"**{sim_percent}%** {indicator}", inline=True)
 
                 if full_anime:
@@ -852,7 +873,6 @@ async def process_auto_recognition(message: discord.Message, attachment: discord
                     if genres := genres_text(full_anime, 3):
                         embed.add_field(name="🎭 التصنيفات", value=genres, inline=False)
 
-                # إضافة رابط MAL
                 if mal_id and str(mal_id).isdigit():
                     embed.add_field(name="🔗 رابط MAL", value=f"[MyAnimeList](https://myanimelist.net/anime/{mal_id})", inline=False)
 
@@ -864,12 +884,19 @@ async def process_auto_recognition(message: discord.Message, attachment: discord
         # لم يتم التعرف
         # =========================================
         logger.warning("❌ لم يتم التعرف على أي نتيجة")
-        await loading_msg.edit(embed=error_embed("❌ لم يتم التعرف على هذه الصورة.\n\n💡 تأكد من:\n• أن الصورة تحتوي على أنمي أو شخصية أنمي\n• أن جودة الصورة جيدة\n• أن روم التعرف مفعّل"))
+
+        error_msg = "❌ لم يتم التعرف على هذه الصورة.\n\n"
+        error_msg += "💡 تأكد من:\n"
+        error_msg += "• أن الصورة تحتوي على أنمي أو شخصية أنمي\n"
+        error_msg += "• أن جودة الصورة جيدة\n"
+        error_msg += "• أن صيغة الصورة مدعومة (PNG, JPG)"
+
+        await loading_msg.edit(embed=error_embed(error_msg))
 
     except Exception as e:
         logger.error(f"❌ خطأ في process_auto_recognition: {e}")
         try:
-            await loading_msg.edit(embed=error_embed(f"❌ حدث خطأ أثناء التحليل: {str(e)[:100]}"))
+            await loading_msg.edit(embed=error_embed(f"❌ حدث خطأ: {str(e)[:100]}"))
         except:
             pass
 
@@ -922,7 +949,7 @@ async def news_broadcast_loop(category: str):
 
 @bot.tree.command(name="help", description="مساعدة وأوامر البوت")
 async def help_cmd(interaction: discord.Interaction):
-    embed = discord.Embed(title="🌸 Uniq v2.1 - المساعدة", description="أوامر البوت المتاحة:", color=Theme.CARD_BG)
+    embed = discord.Embed(title="🌸 Uniq v2.2 - المساعدة", description="أوامر البوت المتاحة:", color=Theme.CARD_BG)
     embed.add_field(name="🎬 الأنمي", value="`/anime` `/top` `/season` `/upcoming` `/airing` `/suggest`", inline=False)
     embed.add_field(name="📚 المانجا", value="`/manga` `/manga-top` `/manga-new`", inline=False)
     embed.add_field(name="📜 المانهوا", value="`/manhwa` `/manhwa-top`", inline=False)
@@ -931,10 +958,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="📰 الأخبار", value="`/activate-anime` `/activate-manga` `/activate-manhwa`\n`/deactivate` `/news-status`", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ═══════════════════════════════════════════════════════════════
-# 🎬 ANIME COMMANDS
-# ═══════════════════════════════════════════════════════════════
-
+# === Anime Commands ===
 @bot.tree.command(name="anime", description="البحث عن أنمي")
 async def anime_cmd(interaction: discord.Interaction, name: str):
     await interaction.response.defer()
@@ -992,10 +1016,7 @@ async def airing_cmd(interaction: discord.Interaction):
             embed.add_field(name=f"{i+1}. {a.get('title')}", value=f"⭐ {a.get('score', '؟')}", inline=False)
         await interaction.followup.send(embed=embed)
 
-# ═══════════════════════════════════════════════════════════════
-# 📚 MANGA COMMANDS
-# ═══════════════════════════════════════════════════════════════
-
+# === Manga Commands ===
 @bot.tree.command(name="manga", description="البحث عن مانجا")
 async def manga_cmd(interaction: discord.Interaction, name: str):
     await interaction.response.defer()
@@ -1051,14 +1072,10 @@ async def character_cmd(interaction: discord.Interaction, name: str):
     else:
         await interaction.followup.send(embed=error_embed("لم يتم العثور على نتائج."))
 
-# ═══════════════════════════════════════════════════════════════
-# 🖼️ RECOGNITION COMMANDS (مُصلّح)
-# ═══════════════════════════════════════════════════════════════
-
+# === Recognition Commands ===
 @bot.tree.command(name="setrecog", description="تفعيل روم التعرف التلقائي على الصور")
 @app_commands.default_permissions(manage_channels=True)
 async def setrecog_cmd(interaction: discord.Interaction):
-    """تفعيل روم التعرف - أرسل صورة في هذا الروم وسيتم التعرف عليها"""
     db.set_recognition_channel(interaction.channel_id)
 
     embed = success_embed("✅ تم تفعيل روم التعرف!", f"📍 الروم: {interaction.channel.mention}\n\n🖼️ أرسل صورة في هذا الروم وسأقوم بالتعرف عليها!\n\n🔍 البحث في:\n• SauceNAO (الشخصيات)\n• Trace.moe (الأنمي)")
@@ -1069,14 +1086,12 @@ async def setrecog_cmd(interaction: discord.Interaction):
 @bot.tree.command(name="clearrecog", description="إيقاف التعرف التلقائي")
 @app_commands.default_permissions(manage_channels=True)
 async def clearrecog_cmd(interaction: discord.Interaction):
-    """إيقاف روم التعرف التلقائي"""
     db.clear_recognition_channel()
     await interaction.response.send_message(embed=success_embed("❌ تم إيقاف التعرف", "تم إيقاف روم التعرف التلقائي."), ephemeral=True)
 
 @bot.tree.command(name="recog-status", description="عرض حالة نظام التعرف")
 @app_commands.default_permissions(manage_channels=True)
 async def recog_status_cmd(interaction: discord.Interaction):
-    """عرض حالة روم التعرف"""
     if db.recognition_channel_id:
         embed = success_embed("🖼️ حالة التعرف", f"✅ روم التعرف مفعّل!\n📍 الروم ID: `{db.recognition_channel_id}`\n\n💡 أرسل صورة في الروم المفعّل لبدء التعرف.")
     else:
@@ -1084,10 +1099,7 @@ async def recog_status_cmd(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ═══════════════════════════════════════════════════════════════
-# 📰 NEWS ACTIVATION COMMANDS
-# ═══════════════════════════════════════════════════════════════
-
+# === News Activation Commands ===
 @bot.tree.command(name="activate-anime", description="تفعيل روم أخبار الأنمي")
 @app_commands.default_permissions(manage_channels=True)
 async def activate_anime_cmd(interaction: discord.Interaction):
